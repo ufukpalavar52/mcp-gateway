@@ -1,0 +1,70 @@
+# Test fixture. Not a copy of production configuration, and not a source of truth for it.
+#
+# The config client is switched off so the suite never reaches for mcp-config: a test that
+# passes only because a server happens to be running on this machine is not a test. What
+# remains here is the minimum a context needs in order to start, with values chosen to be
+# obviously synthetic.
+#
+# Whether the real configuration is correct is asserted in mcp-config, against the file it
+# actually serves. Asserting it here as well would only prove that this file matches
+# itself.
+
+spring:
+  cloud:
+    config:
+      enabled: false
+
+  rabbitmq:
+    listener:
+      simple:
+        # The listener is left registered but not started. A suite that needed a broker
+        # would fail on any machine without one — the same reason the config client is off
+        # above. What the listener does with a message is tested directly instead.
+        auto-startup: false
+
+  datasource:
+    # Unreachable on purpose, and allowed to stay that way: a context that needs a
+    # database says so by failing, rather than by silently using someone's local one.
+    url: jdbc:postgresql://127.0.0.1:5432/mcp-test
+    username: test
+    password: test
+    hikari:
+      initialization-fail-timeout: -1
+      connection-timeout: 250
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+mcp:
+  jwt:
+    secret: test-secret-that-is-comfortably-longer-than-thirty-two-bytes
+    issuer: mcp-gateway
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+  cors:
+    allowed-origins: http://localhost:3000
+    allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+    allow-credentials: true
+    max-age-seconds: 3600
+  invitation:
+    ttl: 7d
+  server:
+    url: http://127.0.0.1:8000
+    token: ""
+    timeout: 30s
+    # Off in tests: a context starting up must not push a catalogue at whatever happens to
+    # be listening on the developer's machine.
+    auto-publish: false
+
+# No log file under test. The suite starts a context, and the main configuration writes one
+# into ~/mcp-logs by default — a test run should not leave anything behind on the machine it
+# ran on. Empty means "no file" to Spring; it is the off switch the MCP_LOG_DIR variable
+# cannot express.
+logging:
+  file:
+    name:

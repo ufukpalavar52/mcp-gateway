@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package cipher.v1;
+
+option go_package = "mcp-cipher/pkg/pb/cipher";
+option java_multiple_files = true;
+option java_package = "com.mcpcipher.grpc.cipher.v1";
+
+// Encrypts and decrypts the secrets the MCP stack stores.
+//
+// The point of a separate service is that the keys live in exactly one process. Callers
+// hold ciphertext and a key id; none of them can read a value without asking, and none of
+// them has to be trusted with a key in order to store one.
+service CipherService {
+  // Encrypts with the currently active key. The reply names the key that was used, and
+  // the caller stores that alongside the ciphertext.
+  rpc Encrypt (EncryptRequest) returns (EncryptResponse);
+
+  // Decrypts with the key the ciphertext was sealed under. A key that has been retired
+  // for encryption can still decrypt, which is what makes rotation possible without
+  // rewriting every stored value at once.
+  rpc Decrypt (DecryptRequest) returns (DecryptResponse);
+
+  // Re-seals a value under the active key. Used to migrate stored values off a retired
+  // key; the plaintext never leaves this service.
+  rpc Rewrap (RewrapRequest) returns (RewrapResponse);
+
+  // Which key new values are sealed under, and which ones can still be opened.
+  rpc Keys (KeysRequest) returns (KeysResponse);
+}
+
+message EncryptRequest {
+  // The value to protect. Never logged.
+  bytes plaintext = 1;
+
+  // Bound into the ciphertext as additional authenticated data. A value sealed for one
+  // purpose therefore cannot be decrypted as another, even by a caller holding both.
+  // Convention: "model-api-key", "ssh-private-key", and so on.
+  string context = 2;
+}
+
+message EncryptResponse {
+  bytes ciphertext = 1;
+  string key_id = 2;
+}
+
+message DecryptRequest {
+  bytes ciphertext = 1;
+  // Must match the context the value was encrypted with, or decryption fails.
+  string context = 2;
+  // Which key opens it. Empty means the active one.
+  string key_id = 3;
+}
+
+message DecryptResponse {
+  bytes plaintext = 1;
+}
+
+message RewrapRequest {
+  bytes ciphertext = 1;
+  string context = 2;
+  string key_id = 3;
+}
+
+message RewrapResponse {
+  bytes ciphertext = 1;
+  string key_id = 2;
+}
+
+message KeysRequest {}
+
+message KeysResponse {
+  // The key new values are sealed under.
+  string active_key_id = 1;
+  // Every key that can still decrypt, the active one included.
+  repeated string known_key_ids = 2;
+}

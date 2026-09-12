@@ -1,0 +1,101 @@
+# Local stack for mcp-gateway.
+#
+# Schema ownership is deliberate: the `liquibase` service applies the changelog and
+# exits, and the gateway only starts once that job has completed successfully. The
+# application itself performs no DDL and no schema validation.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: mcp
+      POSTGRES_USER: mcp
+      POSTGRES_PASSWORD: mcp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcp -d mcp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Runs once, applies pending changesets, exits. Re-running is safe: Liquibase
+  # skips changesets already recorded in DATABASECHANGELOG.
+  liquibase:
+    image: liquibase/liquibase:4.31
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./db/changelog:/liquibase/changelog:ro
+    command:
+      - --changelog-file=db.changelog-master.yaml
+      - --search-path=/liquibase/changelog
+      - --url=jdbc:postgresql://postgres:5432/mcp
+      - --username=mcp
+      - --password=mcp
+      - update
+
+  config:
+    # Sibling repository. The path assumes both are checked out under the same parent,
+    # which is the layout these services are developed in.
+    build: ../mcp-config
+    environment:
+      SERVER_PORT: 8888
+      # The values this server hands to its clients. Given here rather than through
+      # ../mcp-config/.env because that file is for a developer's own machine and is not
+      # copied into the image — baking credentials into an image is how they end up
+      # somewhere nobody meant them to be. An OS environment variable outranks the
+      # imported file, so the same server serves these inside compose and the .env values
+      # outside it.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: mcp
+      DB_USER: mcp
+      DB_PASSWORD: mcp
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      JWT_SECRET_KEY: local-development-secret-that-is-at-least-32-bytes
+    ports:
+      - "8888:8888"
+    healthcheck:
+      # The gateway cannot start before this answers, so the dependency below waits on
+      # the endpoint rather than on the container merely existing.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8888/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build: .
+    depends_on:
+      liquibase:
+        # Start only after the migration job finished without error.
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      config:
+        # Its configuration lives there; without it this service fails fast by design.
+        condition: service_healthy
+    environment:
+      # The only thing this service needs. Credentials and addresses come from the config
+      # server, which reads them from its own .env — see ../mcp-config/.env.example.
+      CONFIG_SERVER_URL: http://config:8888
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres-data:

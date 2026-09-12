@@ -1,0 +1,88 @@
+package com.mcpgateway.service.impl;
+
+import com.mcpgateway.common.dto.PageResponse;
+import com.mcpgateway.common.exception.ResourceNotFoundException;
+import com.mcpgateway.domain.entity.Run;
+import com.mcpgateway.domain.enums.RunStatus;
+import com.mcpgateway.dto.response.RunResponse;
+import com.mcpgateway.mapper.RunMapper;
+import com.mcpgateway.queue.CancellationPublisher;
+import com.mcpgateway.repository.RunRepository;
+import com.mcpgateway.security.SecurityUtils;
+import com.mcpgateway.service.intf.AuditService;
+import com.mcpgateway.service.intf.RunService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+
+/** Reading dispatched work, and asking for it to stop. */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class RunServiceImpl implements RunService {
+
+    private final RunRepository runRepository;
+    private final RunMapper mapper;
+    private final CancellationPublisher cancellationPublisher;
+    private final AuditService auditService;
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<RunResponse> findAll(Pageable pageable) {
+        return PageResponse.from(runRepository.findAllBy(pageable), mapper::toResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public RunResponse findByRef(String runRef) {
+        List<Run> runs = runRepository.findByRunRefOrderByIdAsc(runRef);
+
+        if (runs.isEmpty()) {
+            throw new ResourceNotFoundException("Run", runRef);
+        }
+        // One job can have several actions; the first is the one the caller named.
+        return mapper.toResponse(runs.getFirst());
+    }
+
+    @Override
+    @Transactional
+    public int cancel(String runRef, String reason) {
+        List<Run> runs = runRepository.findByRunRefOrderByIdAsc(runRef);
+
+        if (runs.isEmpty()) {
+            throw new ResourceNotFoundException("Run", runRef);
+        }
+
+        long unfinished = runs.stream().filter(run -> !isFinished(run.getStatus())).count();
+
+        if (unfinished == 0) {
+            // Broadcasting anyway would be harmless but misleading: the audit trail would
+            // show a cancellation for work that had already ended.
+            log.info("Run {} has already finished; nothing to cancel", runRef);
+            return 0;
+        }
+
+        String actor = SecurityUtils.currentActorLabel();
+        cancellationPublisher.cancel(runRef, actor, reason);
+
+        auditService.record("run.cancellation_requested", "run", runs.getFirst().getId(),
+                Map.of("runRef", runRef, "actions", unfinished,
+                        "reason", reason == null ? "" : reason));
+
+        // The rows are left alone on purpose. Whether the work stopped is the executor's to
+        // report, and writing "cancelled" here would be a claim rather than a record — a run
+        // that had already completed on the far side would be filed as cancelled forever.
+        return (int) unfinished;
+    }
+
+    private boolean isFinished(RunStatus status) {
+        return status == RunStatus.SUCCEEDED
+                || status == RunStatus.FAILED
+                || status == RunStatus.CANCELLED;
+    }
+}

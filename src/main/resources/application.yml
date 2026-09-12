@@ -1,0 +1,58 @@
+# Everything this service needs in order to find its configuration. The configuration
+# itself lives in mcp-config, under config-repo/mcp-gateway.yml, and is keyed by the
+# application name below.
+#
+# The import is mandatory, not optional:. A service that starts without its central
+# configuration would run on whatever defaults happened to remain in this file, which is
+# harder to notice and harder to explain than a refusal to start. Point CONFIG_SERVER_URL
+# elsewhere, or run mcp-config, rather than making this tolerant.
+
+spring:
+  application:
+    name: mcp-gateway
+
+  config:
+    import: configserver:${CONFIG_SERVER_URL:http://127.0.0.1:8888}
+
+  cloud:
+    config:
+      # Presented to mcp-config, which refuses an unauthenticated request: it hands out
+      # this service's database password and JWT key, so it asks who is calling.
+      #
+      # These must be real environment variables. Importing ./.env here does not work and
+      # was tried: the config server request is made while this file is still being read,
+      # so a value the same file imports arrives too late and the fetch fails with 401.
+      # The pair is written in mcp-gateway/.env for reference — source it, or set both in
+      # the IDE's run configuration.
+      username: ${CONFIG_USER:mcp}
+      password: ${CONFIG_PASSWORD:}
+
+      # Fail with the connection error rather than a wall of missing-property failures
+      # further into start up.
+      fail-fast: true
+      retry:
+        max-attempts: 3
+        initial-interval: 1000
+
+# A copy of the log on disk, next to the console.
+#
+# Both, not either: the console is what an IDE shows, and the file is what a log shipper
+# can tail after everybody has gone home.
+#
+# MCP_LOG_DIR names a directory, the same one the rest of the stack writes into. Note that
+# an *empty* MCP_LOG_DIR is not the off switch here — Spring treats an empty variable as a
+# value, not as absent, and the path would become "/mcp-gateway.log". To turn the file off, set
+# LOGGING_FILE_NAME to nothing; the test configuration does exactly that.
+logging:
+  # Who asked, on every line. `logging.pattern.level` is where Spring Boot intends MDC
+  # values to go: it is substituted into the default pattern, so the rest of the format —
+  # console and file, colours and all — stays exactly as Boot wrote it. Overriding the
+  # whole pattern would mean owning a format that changes between Boot versions.
+  pattern:
+    level: "%5p [actor=%X{actor:--}]"
+  file:
+    name: ${MCP_LOG_DIR:${user.home}/mcp-logs}/mcp-gateway.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 5
