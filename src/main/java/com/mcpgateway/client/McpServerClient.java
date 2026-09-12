@@ -377,7 +377,7 @@ public class McpServerClient {
      * A question asked earlier in the same conversation, and what it became.
      *
      * <p>Sent so a follow-up has an antecedent. The console kept a thread and looked like a
-     * chat, but every prompt arrived alone: "peki ya turkcell.com.tr icin?" reached the
+     * chat, but every prompt arrived alone: "peki ya example.com icin?" reached the
      * router with nothing to continue, so it was routed — or refused — as though it were
      * the first thing anybody had said.
      *

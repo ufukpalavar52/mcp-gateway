@@ -240,11 +240,11 @@ class ConversationServiceTest {
         /*
          * The gap that made the console a list of unrelated questions. It kept a thread and
          * looked like a chat, but every prompt reached the model alone: "peki ya
-         * turkcell.com.tr icin?" arrived with nothing to continue.
+         * example.com icin?" arrived with nothing to continue.
          */
         Conversation conversation = mineWith(
                 turn("kac tane hesap var", "select count(*) from tblAccounts", null),
-                turn("peki ya turkcell.com.tr", "select count(*) where domain = 'x'", null));
+                turn("peki ya example.com", "select count(*) where domain = 'x'", null));
 
         when(conversations.findByConversationRefAndOwnerId("conv_mine", ME))
                 .thenReturn(Optional.of(conversation));

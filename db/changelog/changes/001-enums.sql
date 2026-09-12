@@ -1,16 +1,16 @@
 --liquibase formatted sql
 
--- Enum tipleri. Tip oluşturma transaction içinde sorunsuz çalışır, ek bayrak
--- gerekmez. İleride bir enum'a DEĞER EKLERKEN durum farklı — bkz. README.md.
+-- Enum types. Creating a type inside a transaction works without any extra flag.
+-- ADDING A VALUE to an enum later is a different matter — see README.md.
 
 --changeset mcp-panel:001-enums dbms:postgresql
---comment: Panelin kullandığı enum tipleri
+--comment: the enum types the panel uses
 
 -- -----------------------------------------------------------------------------
 -- Enum tipleri
--- Yalnızca gerçek kolonlarda kullanılanlar enum. JSONB içindeki ayrımlar
--- (http metodu, ssh kimlik yöntemi, sorgu biçimi …) düz metin olarak durur ve
--- uygulama tarafında doğrulanır.
+-- Only what real columns use is an enum. The distinctions inside JSONB — HTTP
+-- method, SSH auth method, query mode and so on — stay as plain text and are
+-- validated by the application.
 -- -----------------------------------------------------------------------------
 
 CREATE TYPE user_role      AS ENUM ('admin', 'developer', 'viewer');

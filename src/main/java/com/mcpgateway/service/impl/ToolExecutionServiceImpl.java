@@ -101,7 +101,7 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
 
         // What was asked before, so a follow-up has an antecedent. The console kept a
         // thread and looked like a chat, but every prompt reached the MCP server alone:
-        // "peki ya turkcell.com.tr icin?" was routed as though it were the first thing
+        // "peki ya example.com icin?" was routed as though it were the first thing
         // anybody had said, and answered accordingly.
         var thread = conversationService.thread(conversationRef);
 

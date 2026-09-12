@@ -1,25 +1,26 @@
 --liquibase formatted sql
 
 --changeset mcp-panel:020-conversation-memory dbms:postgresql
---comment: uzun sohbetlerin özeti ve araçsız cevaplar
+--comment: summaries for long conversations, and answers that needed no tool
 
--- Bir soru, kendinden önce sorulanlara dayanabiliyor artık; ama pencere kayar. Elli turdan
--- sonra sohbetin başı — herkesin ne hakkında konuştuğunu belirleyen soru — pencerenin
--- dışında kalıyor ve sanki hiç sorulmamış gibi oluyordu.
+-- A question can lean on the ones before it now — but the window slides. After fifty
+-- turns the beginning of the conversation — the question that established what everyone
+-- has been talking about — fell outside it, as though it had never been asked.
 --
--- Özet, düşen turlar üzerine katlanarak büyür: her seferinde bütün sohbeti yeniden
--- okumak, bininci soruda ellinci sorudakinin yirmi katı maliyet demekti. summarised_through_id
--- nereye kadar katlandığını tutar, böylece aynı tur iki kez özete girmez.
+-- The summary grows by folding in the turns that leave: re-reading the whole
+-- conversation each time would cost twenty times as much at the thousandth question as
+-- at the fiftieth. summarised_through_id records how far the folding reached, so no
+-- turn enters the summary twice.
 ALTER TABLE conversations ADD COLUMN summary               text;
 ALTER TABLE conversations ADD COLUMN summarised_through_id bigint;
 
--- Konsola yazılan her şey bir veri sorusu değil: "az önce ne çalıştırdım", "bu sorgu ne
--- yapıyor", "neden boş döndü" — hiçbiri bir araç çağırmayı gerektirmiyor ve hepsi
--- sohbetin kendisinden cevaplanabiliyor. Bunlara "eşleşen araç yok" demek, konsolu tam da
--- insanların ona sorduğu sorular için işe yaramaz kılıyordu.
+-- Not everything typed into the console is a question about data: "what did I just run",
+-- "what does this query do", "why did it come back empty" — none of them needs a tool
+-- called, and all of them can be answered from the conversation. Answering those with
+-- "no tool matches" made the console useless for exactly the questions people ask it.
 --
--- statement'tan ayrı kolon, çünkü ayrı şey: biri bir sistemin çalıştırdığı, diğeri bir
--- modelin söylediği. Aynı yerde tutmak, hesap sayısı tahminini sayımdan ayırt edilemez
+-- A separate column from `statement`, because it is a separate thing: one is what a
+-- system ran, the other is what a model said. Keeping them together would make a guess
 -- hale getirirdi.
 ALTER TABLE conversation_turns ADD COLUMN answer text;
 

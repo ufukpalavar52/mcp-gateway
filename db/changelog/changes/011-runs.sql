@@ -4,7 +4,7 @@
 --comment: runs tablosu ve 2 indeksi
 
 -- =============================================================================
--- 5. Çalıştırma ve denetim
+-- 5. Runs and auditing
 -- =============================================================================
 
 CREATE TABLE runs (
@@ -12,14 +12,14 @@ CREATE TABLE runs (
   definition_id bigint NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
   action_id     bigint REFERENCES actions(id) ON DELETE SET NULL,
   actor_id      bigint REFERENCES users(id) ON DELETE SET NULL,
-  actor_label   text,                          -- "agent:ci-bot" gibi insan olmayan çağıranlar
+  actor_label   text,                          -- non-human callers, such as "agent:ci-bot"
   status        run_status NOT NULL DEFAULT 'pending',
 
-  -- Çalıştırmaya geçilen girdi değerleri. Sır tipindekiler null bırakılır:
+  -- The input values the run was given. Secret-typed ones are left null:
   --   { "surum": "v2.4.0", "ortam": "production", "deploy_token": null }
   inputs        jsonb NOT NULL DEFAULT '{}'::jsonb,
 
-  -- Dinamik modda modelin ürettiği metin — denetim için saklanır.
+  -- In dynamic mode, the text the model wrote — kept for the audit trail.
   generated_command text,
   generated_query   text,
   approved_by   bigint REFERENCES users(id) ON DELETE SET NULL,

@@ -1,31 +1,31 @@
 # Liquibase changelog
 
-`docs/schema.sql`'den üretilmiştir. Kaynak şema ve tasarım gerekçeleri için
+Generated from `docs/schema.sql`. For the source schema and the reasoning behind it, see
 [`../../docs/DATABASE.md`](../../docs/DATABASE.md).
 
-Bu dizin migration'ların **canlı** kaynağıdır. Uygulama bunları uygulamaz —
-ayrı bir Liquibase konteyneri uygular ve gateway ancak o iş başarıyla bitince
-başlar. Uygulamada migration kütüphanesi bulunmaz.
+This directory is the **live** source of the migrations. The application does not apply
+them — a separate Liquibase container does, and the gateway only starts once that job has
+finished successfully. There is no migration library in the application.
 
 ```
 db.changelog-master.yaml
 changes/
-├── 001-enums.sql          9 enum tipi
-├── 002-teams.sql          … 014-audit-events.sql
-└──                        her dosya: bir tablo + kendi indeksleri
+├── 001-enums.sql          9 enum types
+├── 002-teams.sql          … 026-turn-action.sql
+└──                        one file each: a table with its own indexes
 ```
 
-**14 changeset · 9 enum · 13 tablo · 21 indeks.** Saklı yordam ya da trigger yok.
+**26 changesets · 9 enums · 13 tables.** No stored procedures, no triggers.
 
-## Çalıştırma
+## Running it
 
-Compose üzerinden (önerilen — gateway bu iş bitmeden başlamaz):
+Through compose (preferred — the gateway will not start until this finishes):
 
 ```bash
 docker compose run --rm liquibase
 ```
 
-Doğrudan konteynerle:
+With the container directly:
 
 ```bash
 docker run --rm -v "$PWD/db/changelog:/liquibase/changelog:ro" \
@@ -37,7 +37,7 @@ docker run --rm -v "$PWD/db/changelog:/liquibase/changelog:ro" \
   update
 ```
 
-Yerel CLI ile:
+With a local CLI:
 
 ```bash
 liquibase --changelog-file=db/changelog/db.changelog-master.yaml \
@@ -46,49 +46,49 @@ liquibase --changelog-file=db/changelog/db.changelog-master.yaml \
           update
 ```
 
-Geri almak için `update` yerine `rollbackCount 1` ya da `rollback <tag>`.
+To undo, use `rollbackCount 1` or `rollback <tag>` in place of `update`.
 
-## Biçim tercihleri
+## Why the format is what it is
 
-**Formatted SQL, XML değil.** Şemada `jsonb`, GIN indeks, kısmi indeks
-(`WHERE revoked_at IS NULL`), enum tipleri ve `lower(email)` ifade indeksi var.
-Liquibase'in soyut değişiklik tipleri bunları ifade edemez; XML kullanılsa her
-changeset zaten `<sql>` bloğuna düşerdi.
+**Formatted SQL, not XML.** The schema uses `jsonb`, GIN indexes, partial indexes
+(`WHERE revoked_at IS NULL`), enum types and a `lower(email)` expression index. Liquibase's
+abstract change types cannot express any of that; with XML every changeset would end up
+inside a `<sql>` block anyway.
 
-**Her tablo ayrı changeset.** İndeksler kendi tablolarıyla aynı changeset'te —
-tablo düşerse indeksleri de düşer, ayrı rollback gerekmez.
+**One changeset per table.** Indexes live in the same changeset as their table — drop the
+table and the indexes go with it, with no separate rollback to write.
 
-**Her changeset'te rollback var.** Tablolar için `DROP TABLE IF EXISTS`,
-enumlar için ters sırada `DROP TYPE IF EXISTS`.
+**Every changeset has a rollback.** `DROP TABLE IF EXISTS` for tables, and
+`DROP TYPE IF EXISTS` in reverse order for enums.
 
-**`dbms:postgresql`** işaretli; başka bir motorda çalıştırılırsa atlanır,
-sessizce bozuk şema üretmez.
+**Marked `dbms:postgresql`**, so running this against another engine skips it rather than
+quietly producing a broken schema.
 
-**Birincil anahtarlar `bigint … AS IDENTITY`.** Hibernate tarafında
-`@GeneratedValue(strategy = GenerationType.IDENTITY)`. `BY DEFAULT` seçildiği
-için tohum verisi ve veri taşıma sırasında açık kimlik yazılabilir.
+**Primary keys are `bigint … AS IDENTITY`**, which is
+`@GeneratedValue(strategy = GenerationType.IDENTITY)` on the Hibernate side. `BY DEFAULT`
+rather than `ALWAYS`, so seed data and migrations can write an explicit id.
 
-## Sonraki migration'larda dikkat
+## Things to watch in later migrations
 
-### Enum'a değer eklerken
+### Adding a value to an enum
 
-`ALTER TYPE … ADD VALUE` eklenen değeri **aynı transaction içinde
-kullandırmaz**. Liquibase changeset'leri varsayılan olarak transaction içinde
-çalıştığı için `runInTransaction:false` gerekir:
+`ALTER TYPE … ADD VALUE` does **not** let the new value be used in the same transaction.
+Liquibase changesets run inside one by default, so this needs `runInTransaction:false`:
 
 ```sql
 --changeset mcp-panel:015-provider-groq dbms:postgresql runInTransaction:false
 ALTER TYPE model_provider ADD VALUE IF NOT EXISTS 'groq';
---rollback SELECT 1; -- enum değeri geri alınamaz
+--rollback SELECT 1; -- an enum value cannot be removed
 ```
 
-Enum değeri PostgreSQL'de silinemez; rollback'i no-op bırakmak ve bunu belirtmek
-en dürüst yol.
+PostgreSQL cannot drop an enum value. Leaving the rollback as a no-op and saying so is the
+honest way to write it.
 
-### JSONB alanı değiştirirken
+### Changing the shape of a JSONB field
 
-`config`, `params`, `inputs` gibi kolonların **şekli** şemada değil uygulamada
-tanımlı. Şekil değiştiğinde DDL değişmez ama eski satırların taşınması gerekir:
+The **shape** of `config`, `params`, `inputs` and the rest is defined in the application,
+not in the schema. When it changes the DDL does not, but the existing rows have to be
+migrated:
 
 ```sql
 --changeset mcp-panel:016-ssh-timeout dbms:postgresql
@@ -98,17 +98,23 @@ WHERE kind = 'ssh' AND NOT (config ? 'timeoutMs');
 --rollback UPDATE actions SET config = config - 'timeoutMs' WHERE kind = 'ssh';
 ```
 
-Bu tür veri migration'larını DDL changeset'leriyle karıştırma; ayrı dosyada
-tut ki rollback'i tek başına çalıştırabilesin.
+Keep data migrations like this out of the DDL changesets — in their own file, so the
+rollback can be run on its own.
 
-### Checksum
+### Checksums
 
-Uygulanmış bir changeset'in gövdesini **değiştirme** — Liquibase checksum
-tutmaz ve `update` hata verir. Düzeltme gerekiyorsa yeni changeset ekle.
+**Do not edit the body of a changeset that has already been applied.** Liquibase's checksum
+will not match and `update` fails. Add a new changeset instead.
 
-## Ön koşullar
+### Applied by hand
 
-- PostgreSQL 10+ — birincil anahtarlar `bigint GENERATED BY DEFAULT AS IDENTITY`
-  kullanır, bu sözdizimi PG 10 ile geldi. Uzantı gerekmiyor.
-- Boş bir şema. Changelog idempotent değildir; `DATABASECHANGELOG` tablosuyla
-  takip edilir.
+024 through 026 were applied with `psql` rather than by Liquibase. They are written as
+formatted SQL and will be picked up on a fresh database, but the existing one has no
+`DATABASECHANGELOG` row for them. Check that table before assuming Liquibase and the
+database agree.
+
+## Prerequisites
+
+- PostgreSQL 10 or later — the primary keys use
+  `bigint GENERATED BY DEFAULT AS IDENTITY`, which arrived in PG 10. No extensions needed.
+- An empty schema. The changelog is not idempotent; `DATABASECHANGELOG` is what tracks it.
