@@ -169,7 +169,11 @@ CREATE TABLE ai_models (
   -- temperature/top_p were removed in Claude 4.6 and later; sending them is a 400.
   -- The schema enforces that on the JSONB as well.
   CONSTRAINT ai_models_no_temperature_on_anthropic
-    CHECK (provider <> 'anthropic' OR NOT (params ? 'temperature'))
+    -- jsonb_exists() rather than the `?` operator. They mean the same thing, but a
+    -- JDBC driver reads `?` as a bind placeholder and rewrites it: applying this
+    -- through Liquibase failed with `syntax error at or near "$1"`. It never showed up
+    -- before because the schema had only ever been applied with psql.
+    CHECK (provider <> 'anthropic' OR NOT jsonb_exists(params, 'temperature'))
 );
 
 CREATE INDEX ai_models_enabled_idx ON ai_models (enabled);
