@@ -71,3 +71,9 @@ databaseChangeLog:
   - include:
       file: changes/024-turn-deferred.sql
       relativeToChangelogFile: true
+  - include:
+      file: changes/025-turn-arguments.sql
+      relativeToChangelogFile: true
+  - include:
+      file: changes/026-turn-action.sql
+      relativeToChangelogFile: true
