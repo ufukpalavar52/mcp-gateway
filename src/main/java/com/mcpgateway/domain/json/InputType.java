@@ -58,6 +58,14 @@ public enum InputType {
         return switch (this) {
             case DATE -> "date";
             case PASSWORD -> "password";
+            // Both want a box rather than a line, and the schema is the only thing the run
+            // screen sees: without this they arrive there as a plain string, get a one-line
+            // field, and a script cannot be pasted into the form at all.
+            //
+            // A rendering hint and nothing more. Whether a value skips the
+            // shell-metacharacter scan is read from this enum, where TEXTAREA and BLOCK are
+            // not the same thing — never from the schema, which any caller can write.
+            case TEXTAREA, BLOCK -> "textarea";
             default -> null;
         };
     }

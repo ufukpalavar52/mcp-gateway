@@ -23,6 +23,17 @@ import java.util.Map;
 @Component
 public class ToolMapper {
 
+    /**
+     * The most text one block input may carry, in characters.
+     *
+     * <p>Every other input is bounded by being a word; a block is bounded by nothing, and
+     * it is copied into a command line, a queue message and a shell's stdin on the way to a
+     * server. This is the advisory half: mcp-cipher never sees it and mcp-action never
+     * checks it, so the enforcement lives in mcp-server's guardrails, where every caller
+     * passes through. Keep the two in step.
+     */
+    private static final int BODY_LIMIT = 256 * 1024;
+
     public ToolResponse toResponse(Definition definition) {
         return new ToolResponse(
                 definition.getToolName(),
@@ -75,6 +86,13 @@ public class ToolMapper {
         String format = input.getType().jsonSchemaFormat();
         if (format != null) {
             property.put("format", format);
+        }
+        // Published so a client can refuse before sending rather than after. mcp-server
+        // enforces the same ceiling when the command is built — a schema is a description,
+        // not a gate — but a caller that knows it can say so while the text is still in
+        // front of whoever wrote it. The two numbers must match.
+        if (input.getType() == InputType.BLOCK) {
+            property.put("maxLength", BODY_LIMIT);
         }
         if (input.getType() == InputType.SELECT
                 && input.getOptions() != null && !input.getOptions().isEmpty()) {
