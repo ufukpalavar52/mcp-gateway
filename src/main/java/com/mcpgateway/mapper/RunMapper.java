@@ -82,7 +82,10 @@ public class RunMapper {
                         : run.getGeneratedQuery(),
                 run.getStartedAt(),
                 run.getFinishedAt(),
-                targets);
+                targets,
+                // Filled in by the caller that knows about the whole job; one action knows
+                // nothing about its siblings.
+                null);
     }
 
     /**

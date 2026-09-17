@@ -111,10 +111,34 @@ public interface ConversationService {
                      * as the listing action, and {@code expect} refused the dispatch. What a
                      * person approved is a command, not a sentence.
                      */
-                    Long actionId) {
+                    Long actionId,
+
+                    /**
+                     * Every command on the card, when it carried more than one.
+                     *
+                     * <p>Empty for the ordinary single-command proposal, which then runs on
+                     * {@code statement} and {@code actionId} exactly as it always has.
+                     */
+                    List<String> statements,
+
+                    /** The actions those commands belong to, in the same order. */
+                    List<Long> actionIds) {
 
         public java.util.Map<String, String> arguments() {
             return arguments == null ? java.util.Map.of() : arguments;
+        }
+
+        public List<String> statements() {
+            return statements == null ? List.of() : statements;
+        }
+
+        public List<Long> actionIds() {
+            return actionIds == null ? List.of() : actionIds;
+        }
+
+        /** Whether this card is asking about several commands at once. */
+        public boolean isBatch() {
+            return !statements().isEmpty();
         }
     }
 
@@ -149,7 +173,23 @@ public interface ConversationService {
                  * <p>The difference between asking a model whether there is more to do and
                  * reading that there is. Empty when the goal's steps left nothing pending.
                  */
-                List<Map<String, Object>> pending) {
+                List<Map<String, Object>> pending,
+
+                /**
+                 * The values the goal itself was planned with.
+                 *
+                 * <p>A later step needs some of what the first sentence said. "Write this
+                 * script to /tmp/fib.py and run it" carries the path once; the command that
+                 * writes the file prints nothing, so by the time the run step is taken up
+                 * there is no answer to read it out of and the plan is refused for an input
+                 * the person did supply.
+                 *
+                 * <p>These sit <em>under</em> whatever the loop read out of the answers,
+                 * never over it. What a step learned from a result is newer than what the
+                 * goal was typed with, and for a goal working through several records it is
+                 * the only thing telling one record from the next.
+                 */
+                Map<String, String> arguments) {
 
         /** One step of a goal: what was asked, and where its answer can be read. */
         public record Step(String request, String statement, String runRef,

@@ -35,7 +35,7 @@ public interface ToolExecutionService {
      * same. Blank for anything nobody has approved in particular.
      */
     PromptResponse prompt(String prompt, boolean execute, String toolName,
-                          String conversationRef, Long goalTurnId, String expect,
+                          String conversationRef, Long goalTurnId, Object expect,
                           Long supersedes, boolean unattended, Object actionId,
                           java.util.Map<String, String> arguments);
 

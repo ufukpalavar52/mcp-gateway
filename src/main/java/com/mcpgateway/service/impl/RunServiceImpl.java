@@ -45,8 +45,23 @@ public class RunServiceImpl implements RunService {
         if (runs.isEmpty()) {
             throw new ResourceNotFoundException("Run", runRef);
         }
-        // One job can have several actions; the first is the one the caller named.
-        return mapper.toResponse(runs.getFirst());
+        // One job can have several actions, and a job approved whole always does: "write the
+        // script" and "run the script" are one decision and one reference. Returning the
+        // first alone showed the console the write — which prints nothing — while the
+        // output of the command that produced something was never on screen.
+        //
+        // The first is still the one the caller named, so the fields at the top are its
+        // fields; the rest travel alongside for a screen that wants to show them all.
+        List<RunResponse> steps = runs.stream().map(mapper::toResponse).toList();
+        RunResponse first = steps.getFirst();
+
+        return steps.size() == 1
+                ? first
+                : new RunResponse(
+                        first.id(), first.runRef(), first.actionRef(), first.definitionId(),
+                        first.toolName(), first.actionName(), first.actorLabel(),
+                        first.purpose(), first.status(), first.error(), first.statement(),
+                        first.startedAt(), first.finishedAt(), first.targets(), steps);
     }
 
     @Override

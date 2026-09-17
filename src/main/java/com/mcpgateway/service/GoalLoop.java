@@ -17,6 +17,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -58,6 +59,10 @@ public class GoalLoop {
     private final ConversationProperties properties;
     private final GoalProgress progress;
 
+    /** Statuses a run does not move out of. Anything else is still going. */
+    private static final java.util.Set<RunStatus> SETTLED = java.util.EnumSet.of(
+            RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED);
+
     /**
      * Decides whether a finished run's goal needs another step, and takes it.
      *
@@ -81,6 +86,21 @@ public class GoalLoop {
                 : finished.getAction().getKind().name().toLowerCase();
 
         if (!"db".equals(kind) && !"ssh".equals(kind) && !"rest".equals(kind)) {
+            return;
+        }
+
+        // Once per job, not once per action. A job approved whole carries several actions
+        // under one reference and every one of them arrives here as it finishes — so the
+        // same goal was evaluated twice, and the second answer did not have to agree with
+        // the first. It did not: the loop decided the goal was met, was asked again, and
+        // the second time proposed running the script it had just run. The step after that
+        // turned the model's own "the goal has been met" into a command and asked for
+        // approval to echo it.
+        //
+        // Only the action that finishes last sees every sibling settled and goes on. The
+        // results are consumed on one listener thread, so there is nobody to race with.
+        if (runRepository.findByRunRefOrderByIdAsc(finished.getRunRef()).stream()
+                .anyMatch(run -> !SETTLED.contains(run.getStatus()))) {
             return;
         }
 
@@ -166,7 +186,7 @@ public class GoalLoop {
             // unattended, because the step before it was a GET.
             toolExecutionService.prompt(
                     next.request(), true, goal.toolName(), goal.conversationRef(),
-                    goal.turnId(), "", null, true, actionId, next.values());
+                    goal.turnId(), "", null, true, actionId, values(goal, next));
         } catch (RuntimeException failure) {
             // The step is lost and the goal ends there. Retrying from inside a queue
             // listener would turn one bad step into a loop nobody asked for.
@@ -175,6 +195,41 @@ public class GoalLoop {
         } finally {
             SecurityContextHolder.getContext().setAuthentication(previous);
         }
+    }
+
+    /**
+     * What the next step runs on: the goal's own values, with the loop's own over them.
+     *
+     * <p>An unattended step is deliberately not allowed to route a sentence for values — a
+     * machine-written step carries none by design, and asked to find one in "Processing the
+     * first user found with first_name 'Yigit'" the model produced an id nobody had
+     * mentioned and sent a DELETE to approval against it. That rule stands.
+     *
+     * <p>These are a different thing. They are not read out of a sentence now; they are what
+     * the person typed and the planner already resolved, stored on the goal's own turn. A
+     * path named once in "write this to /tmp/fib.py and run it" is not available anywhere
+     * else by the time the run step comes up: the write prints nothing, so there is no
+     * answer to recover it from, and the step was refused for an input that had been given.
+     *
+     * <p>Underneath, never over. What a step read out of a result is the newer fact, and for
+     * a goal working through several records it is the only thing that tells one record from
+     * the next — a goal's own value winning there would make every step repeat the first.
+     */
+    // Package private so the merge can be tested on its own; it is the rule that keeps
+    // a goal working through several records from repeating the first one.
+    static Map<String, String> values(ConversationService.Goal goal,
+                                              McpServerClient.Step next) {
+        if (goal.arguments() == null || goal.arguments().isEmpty()) {
+            return next.values();
+        }
+
+        Map<String, String> merged = new LinkedHashMap<>(goal.arguments());
+
+        if (next.values() != null) {
+            merged.putAll(next.values());
+        }
+
+        return merged;
     }
 
     /** Each step as the step planner reads it: what was asked, and the shape of the answer. */

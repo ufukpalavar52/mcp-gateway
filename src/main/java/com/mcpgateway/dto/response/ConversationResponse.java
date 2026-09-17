@@ -45,6 +45,17 @@ public record ConversationResponse(String conversationRef,
                        String reasoning,
                        String problem,
                        String statement,
+
+                       /**
+                        * Every command on this card, when it carried more than one.
+                        *
+                        * <p>Null for the usual single-command turn, and for every turn
+                        * recorded before a card could hold several — {@code statement} still
+                        * holds the first either way, so nothing that only wants to show
+                        * something has to know about this.
+                        */
+                       List<String> statements,
+
                        String answer,
                        List<Map<String, Object>> warnings,
                        String runRef,

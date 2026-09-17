@@ -793,4 +793,178 @@ class ConversationServiceTest {
                 Map.of("actions", List.of(Map.of("resolved", resolved, "kind", "db"))),
                 runRef == null ? null : Map.of("status", "queued", "run_id", runRef));
     }
+
+    /**
+     * A plan whose commands all resolve from the one sentence is one card.
+     *
+     * <p>"Write this script to /tmp and run it" is two commands and a single decision.
+     * Splitting it cost a second model call and a second wait for an answer already given,
+     * and the person read the same card twice.
+     *
+     * <p>Nothing is pending on such a turn: every action it chose is on the card, and
+     * recording them as waiting would offer them again once the job came back.
+     */
+    @Test
+    void aPlanWithNothingWaitingIsPutOnOneCard() {
+        record(null, "betigi /tmp/x.py altina yaz ve calistir", "", true,
+                twoActions(), null);
+
+        var turn = savedConversation().getTurns().getFirst();
+
+        assertThat(turn.getStatements()).containsExactly(
+                "cat > /tmp/x.py <<'MCPEOF'\nprint(1)\nMCPEOF", "python3 /tmp/x.py");
+        assertThat(turn.getActionIds()).containsExactly(83L, 84L);
+        assertThat(turn.getDeferred()).isNull();
+    }
+
+    /**
+     * A plan holding something that has to wait cannot be approved whole.
+     *
+     * <p>The waiting command does not exist yet — "find the user and delete them" cannot
+     * show the delete before the search has run — so there is nothing to put on the screen,
+     * and approving what has not been shown is the one thing this path exists to prevent.
+     * Those plans stay one action at a time, and the action that is neither proposed nor
+     * waiting still has to be remembered.
+     */
+    @Test
+    void aPlanHoldingSomethingThatWaitsStaysOneAtATime() {
+        record(null, "kullaniciyi bul, sil, sonra raporla", "", true,
+                oneWaitingAmongThree(), null);
+
+        var turn = savedConversation().getTurns().getFirst();
+
+        assertThat(turn.getStatements()).isNull();
+        assertThat(turn.getActionId()).isEqualTo(83L);
+        assertThat(turn.getDeferred())
+                .extracting(item -> item.get("actionId"))
+                .containsExactlyInAnyOrder(84, 85);
+    }
+
+    /** A single command is recorded exactly as it always was. */
+    @Test
+    void oneCommandIsStillOneCommand() {
+        record(null, "betigi yaz", "", true,
+                plan(List.of(Map.of("action_id", 83, "name", "yaz", "kind", "ssh",
+                        "resolved", "cat > /tmp/x.py <<'MCPEOF'\nprint(1)\nMCPEOF"))),
+                null);
+
+        var turn = savedConversation().getTurns().getFirst();
+
+        assertThat(turn.getStatements()).isNull();
+        assertThat(turn.getActionIds()).isNull();
+        assertThat(turn.getActionId()).isEqualTo(83L);
+    }
+
+    private McpServerClient.PromptResult oneWaitingAmongThree() {
+        return plan(List.of(
+                Map.of("action_id", 83, "name", "Bul", "kind", "ssh", "resolved", "grep x"),
+                Map.of("action_id", 84, "name", "Raporla", "kind", "ssh",
+                        "resolved", "echo done"),
+                Map.of("action_id", 85, "name", "Sil", "kind", "ssh", "resolved", "",
+                        "skipped", true, "skip_reason", "waiting on id, which an earlier "
+                                + "action has to answer first")));
+    }
+
+    @Test
+    void anActionSetAsideAsUnwantedStaysOut() {
+        record(null, "betigi yaz", "", true, writeAndUnwanted(), null);
+
+        assertThat(savedConversation().getTurns().getFirst().getDeferred()).isNull();
+    }
+
+    private McpServerClient.PromptResult twoActions() {
+        return plan(List.of(
+                Map.of("action_id", 83, "name", "Dosyayi yaz", "kind", "ssh",
+                        "resolved", "cat > /tmp/x.py <<'MCPEOF'\nprint(1)\nMCPEOF"),
+                Map.of("action_id", 84, "name", "Dosyayi calistir", "kind", "ssh",
+                        "resolved", "python3 /tmp/x.py")));
+    }
+
+    private McpServerClient.PromptResult writeAndUnwanted() {
+        return plan(List.of(
+                Map.of("action_id", 83, "name", "Dosyayi yaz", "kind", "ssh",
+                        "resolved", "cat > /tmp/x.py <<'MCPEOF'\nprint(1)\nMCPEOF"),
+                Map.of("action_id", 85, "name", "Serbest komut", "kind", "ssh",
+                        "resolved", "", "skipped", true,
+                        "skip_reason", "the request did not ask for this")));
+    }
+
+    private McpServerClient.PromptResult plan(List<Map<String, Object>> actions) {
+        return new McpServerClient.PromptResult(
+                "rock_linux_script", "", Map.of(), "", null, "planned",
+                Map.of("actions", actions), null);
+    }
+
+    /**
+     * Approving the first step used to wipe the record of the second.
+     *
+     * <p>An approval re-plans the turn narrowed to one action, and the planner sets every
+     * other one aside saying "the step is for another action". That reads as skipped and is
+     * nothing of the kind — the plan chose it and nobody has been asked about it yet. The
+     * column was rewritten from that re-plan, so the pending action survived right up to
+     * the moment it mattered and then vanished.
+     */
+    @Test
+    void anActionSetAsideForAnotherStepStaysPending() {
+        record(null, "calistir", "", true, narrowedToTheWrite(), null);
+
+        assertThat(savedConversation().getTurns().getFirst().getDeferred())
+                .extracting(item -> item.get("actionId"))
+                .containsExactly(84);
+    }
+
+    private McpServerClient.PromptResult narrowedToTheWrite() {
+        return plan(List.of(
+                Map.of("action_id", 83, "name", "Dosyayi yaz", "kind", "ssh",
+                        "resolved", "cat > /tmp/x.py <<'MCPEOF'\nprint(1)\nMCPEOF"),
+                Map.of("action_id", 84, "name", "Dosyayi calistir", "kind", "ssh",
+                        "resolved", "", "skipped", true,
+                        "skip_reason", "the step is for another action")));
+    }
+
+    /**
+     * A goal used to alternate between its two actions and ask for approval forever.
+     *
+     * <p>Every turn is planned narrowed to one action, and the planner sets the others aside
+     * saying "the step is for another action". Counting those as pending is what lets the
+     * run step be offered after the write — and it also made the run step list the write as
+     * pending all over again. Write, run, write, run.
+     *
+     * <p>An action that has already had its turn is not waiting for anything.
+     */
+    @Test
+    void anActionThatAlreadyHadItsTurnIsNotOfferedAgain() {
+        Conversation conversation = new Conversation();
+        conversation.setConversationRef("conv-1");
+        conversation.setOwner(users.findById(ME).orElseThrow());
+
+        ConversationTurn write = turn(conversation, 1L, 83L, "run-write",
+                List.of(Map.of("actionId", 84, "name", "calistir",
+                        "waitingFor", "", "reason", "later")));
+
+        // The run step, planned narrowed to 84, which sets the write aside as "for another
+        // action" — and so lists 83 as pending again.
+        ConversationTurn run = turn(conversation, 2L, 84L, "run-run",
+                List.of(Map.of("actionId", 83, "name", "yaz",
+                        "waitingFor", "", "reason", "later")));
+        run.setGoalTurn(write);
+
+        when(turns.findByRunRef("run-run")).thenReturn(Optional.of(run));
+        when(turns.findByGoalTurnIdOrderByIdAsc(1L)).thenReturn(List.of(run));
+
+        assertThat(service.goalOf("run-run").pending()).isEmpty();
+    }
+
+    private ConversationTurn turn(Conversation conversation, Long id, Long actionId,
+                                  String runRef, List<Map<String, Object>> deferred) {
+        ConversationTurn turn = new ConversationTurn();
+        turn.setId(id);
+        turn.setConversation(conversation);
+        turn.setActionId(actionId);
+        turn.setRunRef(runRef);
+        turn.setDeferred(deferred);
+        turn.setPrompt("betigi yaz ve calistir");
+        turn.setToolName("rock_linux_script");
+        return turn;
+    }
 }

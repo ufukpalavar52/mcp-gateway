@@ -143,7 +143,7 @@ public class McpServerClient {
      */
     public PromptResult routePrompt(String prompt, String actor, boolean execute,
                                     String toolName, List<PriorTurn> history,
-                                    String summary, String expect, boolean unattended,
+                                    String summary, Object expect, boolean unattended,
                                     Object actionId, Map<String, String> arguments) {
         try {
             PromptResult result = restClient.post()
@@ -181,7 +181,7 @@ public class McpServerClient {
      */
     private static Map<String, Object> request(
             String prompt, String actor, boolean execute, String toolName,
-            List<PriorTurn> history, String summary, String expect, boolean unattended,
+            List<PriorTurn> history, String summary, Object expect, boolean unattended,
             Object actionId, Map<String, String> arguments) {
 
         Map<String, Object> body = new java.util.HashMap<>();
@@ -199,8 +199,16 @@ public class McpServerClient {
         // strength of it came back from the re-plan as the install command, and what ran
         // was not what anybody had agreed to. With this set, a plan that no longer reads
         // the same is not dispatched.
-        if (expect != null && !expect.isBlank()) {
-            body.put("expect", expect);
+        // One command or several: a plan whose commands all resolve from the one sentence
+        // is put in front of somebody whole, and then every one of them is what was agreed
+        // to. The MCP server compares the whole set, so a re-plan that comes back holding
+        // an action nobody was shown is refused rather than quietly run.
+        if (expect instanceof java.util.Collection<?> many) {
+            if (!many.isEmpty()) {
+                body.put("expectAll", many);
+            }
+        } else if (expect != null && !String.valueOf(expect).isBlank()) {
+            body.put("expect", String.valueOf(expect));
         }
 
         // Nobody typed this one. Which action a step lands on is only known once it has
@@ -213,7 +221,11 @@ public class McpServerClient {
         // The one action this step is for, when it is already known. A loop taking up an
         // action the plan set aside does not need a model to choose it again — and every
         // call not made is one the rate limit does not count.
-        if (actionId != null) {
+        if (actionId instanceof java.util.Collection<?> ids) {
+            if (!ids.isEmpty()) {
+                body.put("actionIds", ids);
+            }
+        } else if (actionId != null) {
             body.put("actionId", actionId);
         }
 

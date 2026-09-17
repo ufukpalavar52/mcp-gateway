@@ -25,6 +25,7 @@ import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -85,12 +86,24 @@ public class ConversationServiceImpl implements ConversationService {
         taken.add(goal);
         taken.addAll(turnRepository.findByGoalTurnIdOrderByIdAsc(goal.getId()));
 
+        // The actions this goal has already had a turn about. Every turn is planned narrowed
+        // to one action, and the planner sets the others aside saying "the step is for
+        // another action" — so the step that runs second lists the first one as pending all
+        // over again. Read without this, the goal alternates between its two actions and
+        // asks for approval forever.
+        Set<String> settled = taken.stream()
+                .map(ConversationTurn::getActionId)
+                .filter(Objects::nonNull)
+                .map(String::valueOf)
+                .collect(java.util.stream.Collectors.toSet());
+
         // Everything still waiting, across every turn of this goal. Taking one up clears
         // its entry, so what is left here is what nothing has answered for yet.
         List<Map<String, Object>> pending = taken.stream()
                 .map(ConversationTurn::getDeferred)
                 .filter(Objects::nonNull)
                 .flatMap(List::stream)
+                .filter(item -> !settled.contains(String.valueOf(item.get("actionId"))))
                 .toList();
 
         return new Goal(
@@ -100,7 +113,8 @@ public class ConversationServiceImpl implements ConversationService {
                 goal.getToolName(),
                 goal.getConversation().getOwner().getId(),
                 taken.stream().map(this::asStep).toList(),
-                pending);
+                pending,
+                goal.getArguments() == null ? Map.of() : goal.getArguments());
     }
 
     /**
@@ -111,7 +125,24 @@ public class ConversationServiceImpl implements ConversationService {
      */
     private Goal.Step asStep(ConversationTurn turn) {
         return new Goal.Step(
-                turn.getPrompt(), turn.getStatement(), turn.getRunRef(), turn.getFailure());
+                turn.getPrompt(), statementOf(turn), turn.getRunRef(), turn.getFailure());
+    }
+
+    /**
+     * Everything this step actually did, as one thing to read.
+     *
+     * <p>A turn approved whole ran several commands under one reference, and the loop was
+     * shown only the first. Told nothing but "the file was written", the model reasonably
+     * concluded the file still had to be run — and asked for approval to do again what had
+     * already been done in the same job.
+     *
+     * <p>Joined rather than listed because the step planner reads one statement per step;
+     * what it needs is an honest account of what happened, not a structure.
+     */
+    private static String statementOf(ConversationTurn turn) {
+        List<String> all = turn.getStatements();
+
+        return all == null || all.isEmpty() ? turn.getStatement() : String.join("\n", all);
     }
 
     @Override
@@ -210,7 +241,9 @@ public class ConversationServiceImpl implements ConversationService {
                 turn.getToolName(),
                 turn.getStatement(),
                 turn.getArguments(),
-                turn.getActionId());
+                turn.getActionId(),
+                turn.getStatements(),
+                turn.getActionIds());
     }
 
     @Override
@@ -360,6 +393,8 @@ public class ConversationServiceImpl implements ConversationService {
                 .answer(result == null ? null : blankToNull(result.answer()))
                 .warnings(warningsOf(result))
                 .deferred(deferredOf(result))
+                .statements(batchableOf(result, ConversationServiceImpl::resolvedOf))
+                .actionIds(batchableOf(result, ConversationServiceImpl::actionIdOfAction))
                 .arguments(argumentsOf(result))
                 .actionId(actionIdOf(result))
                 .runRef(runRefOf(result))
@@ -528,6 +563,7 @@ public class ConversationServiceImpl implements ConversationService {
                 turn.getReasoning(),
                 turn.getProblem(),
                 turn.getStatement(),
+                turn.getStatements(),
                 turn.getAnswer(),
                 turn.getWarnings(),
                 turn.getRunRef(),
@@ -622,11 +658,31 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     /**
-     * The actions the plan chose and could not run yet, with what each is waiting for.
+     * The actions the plan chose and this turn will not carry out, with why each waits.
      *
      * <p>Read off the plan for the same reason the warnings are: the decision was made
      * once, where the values in hand were known, and a second implementation here would be
      * a second thing to keep in step with it.
+     *
+     * <p>Two kinds end up here, and for a while only the first did.
+     *
+     * <p>An action <em>deferred</em> because an earlier one has to answer for its inputs —
+     * "find the user and delete them", where the id does not exist at planning time.
+     *
+     * <p>And an action that resolved perfectly well and simply is not the one being
+     * proposed. Approval narrows a turn to a single action: {@link #actionIdOf} takes the
+     * first resolved command and that is what the card shows, because {@code expect} means
+     * "the command in front of me is this one" and cannot mean two. Every other runnable
+     * action was dropped on the floor — too complete to be deferred, not first enough to be
+     * proposed.
+     *
+     * <p>"Write this script to /tmp and run it" is exactly that shape: both commands
+     * resolve from the one sentence, so nothing is waiting on anything, and the run step
+     * was never dispatched, never proposed, and never reported as missing. Three attempts
+     * wrote the file and not one ran it.
+     *
+     * <p>It only shows when approval is on. Without it the whole plan goes to the executor
+     * as one job and every chosen action runs.
      */
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> deferredOf(McpServerClient.PromptResult result) {
@@ -638,13 +694,22 @@ public class ConversationServiceImpl implements ConversationService {
             return null;
         }
 
+        // A turn being approved whole has nothing pending: every action it chose is on the
+        // card, and recording them as waiting would offer them again once the job returns.
+        if (batchableOf(result, ConversationServiceImpl::resolvedOf) != null) {
+            return null;
+        }
+
+        // The one this turn is about. Null when nothing resolved, and then there is no
+        // proposal to be second to.
+        Long proposed = actionIdOf(result);
+
         List<Map<String, Object>> waiting = actions.stream()
                 .filter(Map.class::isInstance)
                 .map(action -> (Map<String, Object>) action)
-                .filter(action -> Boolean.TRUE.equals(action.get("skipped")))
-                // Only the ones an earlier action has to answer for. An action the request
-                // simply did not ask for is not pending; nothing will make it runnable.
-                .filter(action -> String.valueOf(action.get("skip_reason")).startsWith("waiting on "))
+                .filter(action -> isDeferred(action)
+                        || isForAnotherStep(action)
+                        || isUnproposed(action, proposed))
                 .map(action -> Map.of(
                         "actionId", action.get("action_id"),
                         "name", String.valueOf(action.getOrDefault("name", "")),
@@ -653,12 +718,130 @@ public class ConversationServiceImpl implements ConversationService {
                         // id values from search results" — which the planner then resolved
                         // as another search.
                         "waitingFor", inputNames(action),
-                        "reason", String.valueOf(action.getOrDefault("skip_reason", ""))))
+                        "reason", isDeferred(action)
+                                ? String.valueOf(action.getOrDefault("skip_reason", ""))
+                                : "its turn comes after the one being approved"))
                 .toList();
 
         // Null rather than an empty list: nothing pending and no row to read are the same
         // thing, and it keeps the column empty for the turns that had none.
         return waiting.isEmpty() ? null : waiting;
+    }
+
+    /**
+     * Held back because an earlier action has to answer for its inputs.
+     *
+     * <p>Only those. An action the request simply did not ask for is not pending, and
+     * nothing that happens later will make it runnable.
+     */
+    private static boolean isDeferred(Map<String, Object> action) {
+        return Boolean.TRUE.equals(action.get("skipped"))
+                && String.valueOf(action.get("skip_reason")).startsWith("waiting on ");
+    }
+
+    /**
+     * Every command this turn can put in front of somebody at once, or null for one.
+     *
+     * <p>A plan whose commands all resolve from the one sentence — "write this script and
+     * run it" — is one decision wearing two cards. Splitting it costs a second model call
+     * and a second wait for an answer already given, and the person reads the same thing
+     * twice.
+     *
+     * <p>Null whenever anything in the plan is <em>waiting</em> on an earlier answer. That
+     * command does not exist yet: "find the user and delete them" cannot show the delete
+     * before the search has run, and approving what has not been shown is the one thing
+     * this path exists to prevent. Those plans stay one action at a time.
+     *
+     * <p>Null too for a single action, so a turn that showed one command is recorded
+     * exactly as it always was.
+     */
+    private static <T> List<T> batchableOf(McpServerClient.PromptResult result,
+                                           java.util.function.Function<Map<String, Object>, T> of) {
+        // Asked of the whole plan, not of the part that is going to run. A waiting action is
+        // by definition not runnable, so looking only at the runnable ones would never find
+        // one — and the plan that most needs to stay one card at a time would be batched.
+        if (actionsOf(result).stream().anyMatch(ConversationServiceImpl::isDeferred)) {
+            return null;
+        }
+
+        List<Map<String, Object>> running = runnableOf(result);
+
+        if (running.size() < 2) {
+            return null;
+        }
+
+        List<T> values = running.stream().map(of).filter(Objects::nonNull).toList();
+
+        return values.size() == running.size() ? values : null;
+    }
+
+    /** Every action the plan holds, set aside or not. */
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> actionsOf(McpServerClient.PromptResult result) {
+        if (result == null || result.plan() == null
+                || !(result.plan().get("actions") instanceof List<?> actions)) {
+            return List.of();
+        }
+
+        return actions.stream()
+                .filter(Map.class::isInstance)
+                .map(action -> (Map<String, Object>) action)
+                .toList();
+    }
+
+    /** The plan's actions that are going to run, in the order the plan put them. */
+    private static List<Map<String, Object>> runnableOf(McpServerClient.PromptResult result) {
+        return actionsOf(result).stream()
+                .filter(action -> !Boolean.TRUE.equals(action.get("skipped")))
+                .filter(action -> resolvedOf(action) != null)
+                .toList();
+    }
+
+    /** One action's resolved command, or null when it has none. */
+    private static String resolvedOf(Map<String, Object> action) {
+        Object resolved = action.get("resolved");
+
+        return resolved == null || String.valueOf(resolved).isBlank()
+                ? null
+                : String.valueOf(resolved);
+    }
+
+    /** One action's id. */
+    private static Long actionIdOfAction(Map<String, Object> action) {
+        Object id = action.get("action_id");
+
+        return id == null ? null : Long.valueOf(String.valueOf(id));
+    }
+
+    /**
+     * Set aside because this turn is about a different action, not because nothing wants it.
+     *
+     * <p>Approving narrows a turn to one action, and the planner sets every other one aside
+     * saying so. That reads as "skipped" and is nothing of the kind: the plan chose it and a
+     * person has not yet been asked about it.
+     *
+     * <p>Without this the list was written correctly when the plan was made and then wiped
+     * when the first step was approved — the approval re-plans, the re-plan sets the others
+     * aside, and the column was rewritten from it. The pending action survived exactly up to
+     * the moment it mattered.
+     */
+    private static boolean isForAnotherStep(Map<String, Object> action) {
+        return Boolean.TRUE.equals(action.get("skipped"))
+                && String.valueOf(action.get("skip_reason"))
+                        .startsWith("the step is for another action");
+    }
+
+    /** Chosen, resolved, runnable — and not the action this turn is proposing. */
+    private static boolean isUnproposed(Map<String, Object> action, Long proposed) {
+        if (proposed == null || Boolean.TRUE.equals(action.get("skipped"))) {
+            return false;
+        }
+
+        Object resolved = action.get("resolved");
+        Object id = action.get("action_id");
+
+        return resolved != null && !String.valueOf(resolved).isBlank()
+                && id != null && !proposed.equals(Long.valueOf(String.valueOf(id)));
     }
 
     /** The inputs a deferred action is waiting for, as a list a person or a model reads. */

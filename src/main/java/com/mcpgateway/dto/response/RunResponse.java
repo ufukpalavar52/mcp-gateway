@@ -38,7 +38,22 @@ public record RunResponse(Long id,
                           String statement,
                           Instant startedAt,
                           Instant finishedAt,
-                          List<Target> targets) {
+                          List<Target> targets,
+
+                          /**
+                           * Every action of this job, when it carried more than one.
+                           *
+                           * <p>A job approved whole runs its actions under one reference:
+                           * "write the script" and "run the script" are one decision and one
+                           * job. Looking it up returned only the first, so the console showed
+                           * the write — which prints nothing — and the output of the command
+                           * that actually produced something was never on screen.
+                           *
+                           * <p>Null for a job with one action, which is most of them. The
+                           * fields above stay the first action either way, so anything that
+                           * only wants to show a result does not have to know about this.
+                           */
+                          List<RunResponse> steps) {
 
     public record Target(String address,
                          TargetStatus status,

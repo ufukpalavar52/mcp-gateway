@@ -83,16 +83,22 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
         // the loop wrote carries no values in its words; asked to find them there, routing
         // produced an id of its own, which did not match the command on screen, so `expect`
         // stopped the dispatch and the card fell back to waiting with nothing said.
+        // One card, one decision — however many commands were on it. A plan whose commands
+        // all resolve from the one sentence is shown whole, and approving it names every
+        // action rather than letting the choice run again: the re-plan an approval performs
+        // cannot then come back with a different selection than the one on the screen.
         return prompt(proposal.request(), true, proposal.toolName(),
                 proposal.conversationRef(), proposal.goalTurnId(),
-                proposal.statement(), proposal.turnId(), false, proposal.actionId(),
+                proposal.isBatch() ? proposal.statements() : proposal.statement(),
+                proposal.turnId(), false,
+                proposal.isBatch() ? proposal.actionIds() : proposal.actionId(),
                 proposal.arguments());
     }
 
     @Override
     @Transactional
     public PromptResponse prompt(String prompt, boolean execute, String toolName,
-                                 String conversationRef, Long goalTurnId, String expect,
+                                 String conversationRef, Long goalTurnId, Object expect,
                                  Long supersedes, boolean unattended, Object actionId,
                                  java.util.Map<String, String> arguments) {
 

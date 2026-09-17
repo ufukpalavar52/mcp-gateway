@@ -111,6 +111,22 @@ public class ConversationTurn extends BaseEntity {
     private List<Map<String, Object>> deferred;
 
     /**
+     * Every command this turn put in front of somebody, when there was more than one.
+     *
+     * <p>Null for a turn that showed one, which is most of them and every turn recorded
+     * before this column existed — {@code statement} still holds the first either way, so
+     * nothing that reads the history has to know about this.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private List<String> statements;
+
+    /** The actions those commands belong to, in the same order. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private List<Long> actionIds;
+
+    /**
      * The values this turn was planned with.
      *
      * <p>Approving re-plans rather than replays — a stored command is the one path into the
