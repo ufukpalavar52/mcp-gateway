@@ -52,7 +52,9 @@ class AcceptInvitationTest {
 
     private final AuthServiceImpl service = new AuthServiceImpl(
             users, encoder, tokens, mock(TokenStore.class), mock(UserMapper.class),
-            mock(AuditService.class), invitations, invitationTokens);
+            mock(AuditService.class), invitations, invitationTokens,
+            mock(com.mcpgateway.repository.PasswordResetRepository.class),
+            mock(com.mcpgateway.service.InvitationMailer.class));
 
     private static final AcceptInvitationRequest REQUEST =
             new AcceptInvitationRequest("Yeni Kisi", "a-long-enough-password");

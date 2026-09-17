@@ -3,6 +3,9 @@ package com.mcpgateway.service.intf;
 import com.mcpgateway.dto.request.LoginRequest;
 import com.mcpgateway.dto.request.RefreshTokenRequest;
 import com.mcpgateway.dto.request.AcceptInvitationRequest;
+import com.mcpgateway.dto.request.ChangePasswordRequest;
+import com.mcpgateway.dto.request.ForgotPasswordRequest;
+import com.mcpgateway.dto.request.ResetPasswordRequest;
 import com.mcpgateway.dto.response.AuthResponse;
 
 /** Credential exchange and token lifecycle. */
@@ -25,6 +28,32 @@ public interface AuthService {
 
     /** Exchanges a refresh token for a new pair, revoking the presented one. */
     AuthResponse refresh(RefreshTokenRequest request);
+
+    /**
+     * Changes the signed-in person's own password.
+     *
+     * <p>Clears the flag an administrator's chosen password set, which is the whole reason
+     * this can be reached while the panel is locked to one screen.
+     */
+    void changePassword(ChangePasswordRequest request);
+
+    /**
+     * Starts a password reset, if that address has an account.
+     *
+     * <p>Answers the same either way. An endpoint that says "no such account" is an
+     * endpoint that will be fed a list of addresses to find out which ones are worth
+     * attacking, and it is open to anybody who can reach the login page.
+     */
+    void forgotPassword(ForgotPasswordRequest request);
+
+    /**
+     * Finishes it: sets the password the link was issued for.
+     *
+     * <p>Every session of that account ends with it. Somebody resetting because their
+     * account was taken would otherwise leave whoever took it signed in, which undoes the
+     * whole point of having reset.
+     */
+    void resetPassword(String token, ResetPasswordRequest request);
 
     /** Revokes the tokens of the current session. */
     void logout(String accessTokenId);

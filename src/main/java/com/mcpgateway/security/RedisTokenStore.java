@@ -75,6 +75,24 @@ public class RedisTokenStore implements TokenStore {
         return TOKEN_KEY_PREFIX + member(type, tokenId);
     }
 
+    @Override
+    public int liveSessionsOf(Long userId) {
+        Set<String> members = redisTemplate.opsForSet().members(userKey(userId));
+
+        if (members == null) {
+            return 0;
+        }
+
+        // The index outlives the tokens it names, so a member can point at nothing. Each
+        // one is checked rather than trusted — otherwise the count would include sign-ins
+        // that expired days ago.
+        return (int) members.stream()
+                .filter(name -> name.startsWith(TokenType.REFRESH.claimValue() + ":"))
+                .filter(name -> Boolean.TRUE.equals(
+                        redisTemplate.hasKey(TOKEN_KEY_PREFIX + name)))
+                .count();
+    }
+
     private String member(TokenType type, String tokenId) {
         return type.claimValue() + ":" + tokenId;
     }

@@ -1,7 +1,13 @@
 package com.mcpgateway.service.impl;
 
 import com.mcpgateway.common.exception.AuthenticationFailedException;
+import com.mcpgateway.dto.request.ChangePasswordRequest;
+import com.mcpgateway.common.exception.BusinessRuleException;
+import com.mcpgateway.security.SecurityUtils;
 import com.mcpgateway.common.exception.ConflictException;
+import com.mcpgateway.domain.entity.PasswordReset;
+import com.mcpgateway.dto.request.ForgotPasswordRequest;
+import com.mcpgateway.dto.request.ResetPasswordRequest;
 import com.mcpgateway.domain.entity.User;
 import com.mcpgateway.security.InvitationTokens;
 import com.mcpgateway.repository.UserInvitationRepository;
@@ -44,6 +50,9 @@ public class AuthServiceImpl implements AuthService {
     /** Returned for both unknown accounts and wrong passwords, so neither is discoverable. */
     private static final String INVALID_CREDENTIALS = "Email or password is incorrect";
 
+    /** How long a reset link lives. A password in a mailbox, so: not long. */
+    private static final java.time.Duration RESET_WINDOW = java.time.Duration.ofHours(1);
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService tokenService;
@@ -52,6 +61,8 @@ public class AuthServiceImpl implements AuthService {
     private final AuditService auditService;
     private final UserInvitationRepository invitationRepository;
     private final InvitationTokens invitationTokens;
+    private final com.mcpgateway.repository.PasswordResetRepository resetRepository;
+    private final com.mcpgateway.service.InvitationMailer mailer;
 
     @Override
     @Transactional
@@ -144,6 +155,105 @@ public class AuthServiceImpl implements AuthService {
     }
 
     /** Issues a pair and registers both ids so they can be revoked before they expire. */
+    @Override
+    @Transactional
+    public void changePassword(ChangePasswordRequest request) {
+        User user = SecurityUtils.currentUserId()
+                .flatMap(userRepository::findById)
+                .orElseThrow(() -> new AuthenticationFailedException("Not signed in"));
+
+        // Asked for even though the caller already holds a session, and that is the point:
+        // a screen left open is a session anybody walking past has, and the first useful
+        // thing to do with a borrowed one is change the password and keep it. The old
+        // password authenticates the person rather than the session.
+        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+            // 422 rather than 401, and the distinction is not pedantry: the caller *is*
+            // authenticated — what is wrong is a field they typed. Answering 401 made the
+            // panel's client read it as an expired session, refresh the token, retry, get
+            // the same answer and sign the person out. Mistyping a password logged you
+            // out of a session that was perfectly valid.
+            //
+            // "Who are you" and "what did you type" are different questions and need
+            // different answers.
+            throw new BusinessRuleException("The current password is not right");
+        }
+
+        // Refused rather than quietly accepted: somebody typing the same password back is
+        // usually answering the wrong question, and for an account whose password an
+        // administrator chose it would leave the thing this flow exists to end.
+        if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
+            throw new BusinessRuleException("The new password must be different");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        user.setMustChangePassword(false);
+
+        auditService.recordAs(user.getId(), user.getEmail(), "auth.password.changed",
+                "user", user.getId(), Map.of());
+        log.info("Password changed for account {}", user.getId());
+    }
+
+    @Override
+    @Transactional
+    public void forgotPassword(ForgotPasswordRequest request) {
+        // The same answer either way, and it is the caller who never learns the
+        // difference: an endpoint that says "no such account" will be handed a list of
+        // addresses to find out which ones are worth attacking, and this one is open to
+        // anybody who can reach the login page.
+        //
+        // So the work is done when there is somebody to do it for, and the method returns
+        // quietly when there is not. The log keeps the distinction, because the operator is
+        // allowed to know it.
+        userRepository.findByEmailIgnoreCase(request.email()).ifPresentOrElse(user -> {
+            String token = invitationTokens.mint();
+
+            PasswordReset reset = PasswordReset.builder()
+                    .user(user)
+                    .tokenHash(invitationTokens.hash(token))
+                    // An hour, not an invitation's seven days. An invitation moves at the
+                    // speed of hiring somebody; a reset link is a password, and the less
+                    // time it spends sitting in a mailbox the better.
+                    .expiresAt(Instant.now().plus(RESET_WINDOW))
+                    .build();
+
+            PasswordReset saved = resetRepository.save(reset);
+
+            // Inside the transaction: a link that could not be sent should not leave a row
+            // behind that still opens the account.
+            mailer.sendReset(user.getEmail(), token, saved.getExpiresAt());
+
+            auditService.recordAs(user.getId(), user.getEmail(), "auth.password.reset.requested",
+                    "user", user.getId(), Map.of());
+            log.info("Password reset requested for account {}", user.getId());
+        }, () -> log.info("Password reset asked for {}, which has no account", request.email()));
+    }
+
+    @Override
+    @Transactional
+    public void resetPassword(String token, ResetPasswordRequest request) {
+        PasswordReset reset = resetRepository.findByTokenHash(invitationTokens.hash(token))
+                .filter(found -> found.isRedeemable(Instant.now()))
+                // Expired, used and never-issued are one answer. Telling them apart is a
+                // way to learn which links exist.
+                .orElseThrow(() -> new AuthenticationFailedException("This link is no longer usable"));
+
+        User user = reset.getUser();
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+
+        // Whatever an administrator set is beside the point now: they have chosen their own.
+        user.setMustChangePassword(false);
+        reset.setUsedAt(Instant.now());
+
+        // Every session of theirs ends. Somebody resetting because their account was taken
+        // would otherwise leave whoever took it signed in — which undoes the whole reason
+        // for resetting.
+        tokenStore.revokeAllForUser(user.getId());
+
+        auditService.recordAs(user.getId(), user.getEmail(), "auth.password.reset",
+                "user", user.getId(), Map.of());
+        log.info("Password reset for account {}; every session revoked", user.getId());
+    }
+
     private AuthResponse issueTokens(User user) {
         JwtTokenService.IssuedToken access = tokenService.issue(user, TokenType.ACCESS);
         JwtTokenService.IssuedToken refresh = tokenService.issue(user, TokenType.REFRESH);

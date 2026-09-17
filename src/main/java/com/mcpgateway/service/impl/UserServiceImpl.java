@@ -8,6 +8,8 @@ import com.mcpgateway.domain.entity.Team;
 import com.mcpgateway.domain.entity.User;
 import com.mcpgateway.domain.entity.UserInvitation;
 import com.mcpgateway.domain.enums.UserStatus;
+import com.mcpgateway.dto.request.CreateUserRequest;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import com.mcpgateway.dto.request.InviteUserRequest;
 import com.mcpgateway.dto.request.UpdateUserRequest;
 import com.mcpgateway.dto.response.InvitationResponse;
@@ -22,6 +24,7 @@ import com.mcpgateway.security.TokenStore;
 import com.mcpgateway.service.intf.AuditService;
 import com.mcpgateway.service.intf.UserService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +33,7 @@ import java.time.Instant;
 import java.util.Map;
 
 /** Account administration, including the invitation flow. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
@@ -37,6 +41,8 @@ public class UserServiceImpl implements UserService {
     private static final String RESOURCE = "User";
 
     private final InvitationProperties invitationProperties;
+    private final PasswordEncoder passwordEncoder;
+    private final com.mcpgateway.service.InvitationMailer mailer;
     private final com.mcpgateway.security.InvitationTokens invitationTokens;
     private final UserRepository userRepository;
     private final UserInvitationRepository invitationRepository;
@@ -90,6 +96,37 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
+    public UserResponse create(CreateUserRequest request) {
+        if (userRepository.existsByEmailIgnoreCase(request.email())) {
+            throw new ConflictException("An account with this email already exists");
+        }
+
+        User user = User.builder()
+                .email(request.email())
+                .fullName(request.fullName())
+                .role(request.role())
+                .passwordHash(passwordEncoder.encode(request.password()))
+                // Active, because the whole point is that they can sign in now.
+                .status(UserStatus.ACTIVE)
+                // And flagged, because the password is not theirs yet: two people know it,
+                // and only one of them owns the account.
+                .mustChangePassword(true)
+                .build();
+
+        User saved = userRepository.save(user);
+
+        // The password is not in the audit entry, and not in the log line either. What is
+        // worth keeping is that an administrator made this account and in what role.
+        auditService.record("user.created", "user", saved.getId(),
+                Map.of("email", saved.getEmail(), "role", saved.getRole().name()));
+        log.info("Account {} created as {} with a password set by an administrator",
+                saved.getId(), saved.getRole());
+
+        return mapper.toResponse(saved);
+    }
+
+    @Override
+    @Transactional
     public InvitationResponse invite(InviteUserRequest request) {
         if (userRepository.existsByEmailIgnoreCase(request.email())) {
             throw new ConflictException("An account with this email already exists");
@@ -108,6 +145,24 @@ public class UserServiceImpl implements UserService {
                 .build();
 
         UserInvitation saved = invitationRepository.save(invitation);
+
+        // Sent inside the transaction, so a delivery that fails takes the row with it. An
+        // invitation nobody will ever hear about is worse than a refusal: the refusal is
+        // visible and the row is not, and the administrator would go on believing somebody
+        // had been invited.
+        //
+        // Requiring this is only safe because it is not the only way in — an account with
+        // a password set by hand needs nothing but the database.
+        try {
+            mailer.sendInvitation(saved.getEmail(), token, saved.getExpiresAt());
+        } catch (RuntimeException failure) {
+            // The host, not the credentials, and never the token.
+            log.error("Could not send the invitation for {}: {}",
+                    request.email(), failure.getMessage());
+            throw new BusinessRuleException(
+                    "The invitation could not be sent, so it was not created. Check the mail settings.");
+        }
+
         auditService.record("user.invited", "user_invitation", saved.getId(),
                 Map.of("email", request.email()));
 

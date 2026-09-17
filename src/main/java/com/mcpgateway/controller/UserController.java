@@ -1,6 +1,7 @@
 package com.mcpgateway.controller;
 
 import com.mcpgateway.common.dto.PageResponse;
+import com.mcpgateway.dto.request.CreateUserRequest;
 import com.mcpgateway.dto.request.InviteUserRequest;
 import com.mcpgateway.dto.request.UpdateUserRequest;
 import com.mcpgateway.dto.response.InvitationResponse;
@@ -66,6 +67,19 @@ public class UserController {
     }
 
     /** The returned token is shown once and stored only as a hash. */
+    /**
+     * Creates an account outright, with a password the administrator picks.
+     *
+     * <p>The other way in is an invitation. This one needs nothing but the database, which
+     * makes it the way back in when mail is misconfigured — and mail being required for
+     * invitations is only safe because this exists.
+     */
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UserResponse> create(@Valid @RequestBody CreateUserRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(userService.create(request));
+    }
+
     @PostMapping("/invitations")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<InvitationResponse> invite(@Valid @RequestBody InviteUserRequest request) {

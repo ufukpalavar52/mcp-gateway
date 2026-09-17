@@ -40,6 +40,18 @@ public class User extends BaseEntity {
     @Column(name = "password_hash")
     private String passwordHash;
 
+    /**
+     * Whether this password was chosen by somebody other than its owner.
+     *
+     * <p>Set when an administrator creates an account with a password they picked. Two
+     * people know it and only one of them owns the account, so the panel locks to the
+     * password screen until it has been changed — the window is not something to leave
+     * open out of politeness.
+     */
+    @Builder.Default
+    @Column(name = "must_change_password", nullable = false)
+    private boolean mustChangePassword = false;
+
     @Builder.Default
     @Column(nullable = false)
     private UserRole role = UserRole.VIEWER;

@@ -44,6 +44,9 @@ public class SecurityConfig {
             // Unauthenticated of necessity: the caller has no account yet, and the
             // token in the path is the whole of the authorisation.
             "/api/v1/auth/invitations/*/accept",
+            // Somebody who could sign in would not be asking for these.
+            "/api/v1/auth/password/forgot",
+            "/api/v1/auth/password/reset/*",
             "/api/v1/auth/refresh",
             "/actuator/health/**"
     };

@@ -83,3 +83,9 @@ databaseChangeLog:
   - include:
       file: changes/028-definition-access.sql
       relativeToChangelogFile: true
+  - include:
+      file: changes/029-must-change-password.sql
+      relativeToChangelogFile: true
+  - include:
+      file: changes/030-password-resets.sql
+      relativeToChangelogFile: true

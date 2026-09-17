@@ -25,4 +25,16 @@ public interface TokenStore {
 
     /** Revokes every token of a user; used by logout and by account suspension. */
     void revokeAllForUser(Long userId);
+
+    /**
+     * How many sign-ins of this person are still live.
+     *
+     * <p>Refresh tokens are counted and access tokens are not: one sign-in issues one of
+     * each, and the access token is replaced every few minutes. Counting both would report
+     * a number that climbs while somebody sits reading a page.
+     *
+     * <p>The index is a set with a longer expiry than the tokens it points at, so an entry
+     * can outlive what it names. Members whose token is gone are not counted.
+     */
+    int liveSessionsOf(Long userId);
 }
