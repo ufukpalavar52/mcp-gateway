@@ -115,4 +115,27 @@ class PasswordAndAccountsTest {
 
         assertThat(me.isMustChangePassword()).isTrue();
     }
+
+    /**
+     * The flag has to leave the building.
+     *
+     * <p>It was set in the database and left out of the response, so it was true and inert:
+     * the account was created, the column said so, and nothing ever asked the person to
+     * change anything. The panel locks itself on this field and only ever sees a user
+     * through this record.
+     */
+    @Test
+    void theFlagReachesTheClient() {
+        User made = User.builder()
+                .email("yeni@example.com")
+                .fullName("Yeni")
+                .role(UserRole.VIEWER)
+                .status(UserStatus.ACTIVE)
+                .mustChangePassword(true)
+                .build();
+        made.setId(9L);
+
+        assertThat(new com.mcpgateway.mapper.UserMapper().toResponse(made).mustChangePassword())
+                .isTrue();
+    }
 }

@@ -20,7 +20,8 @@ public class UserMapper {
                 user.getTeam() == null ? null : user.getTeam().getName(),
                 user.getAvatarUrl(),
                 user.getLastLoginAt(),
-                user.getCreatedAt());
+                user.getCreatedAt(),
+                user.isMustChangePassword());
     }
 
     /**
