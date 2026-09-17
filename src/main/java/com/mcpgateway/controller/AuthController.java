@@ -2,7 +2,7 @@ package com.mcpgateway.controller;
 
 import com.mcpgateway.dto.request.LoginRequest;
 import com.mcpgateway.dto.request.RefreshTokenRequest;
-import com.mcpgateway.dto.request.RegisterRequest;
+import com.mcpgateway.dto.request.AcceptInvitationRequest;
 import com.mcpgateway.dto.response.AuthResponse;
 import com.mcpgateway.security.AuthenticatedUser;
 import com.mcpgateway.security.SecurityUtils;
@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Credential endpoints.
  *
- * <p>Login, register and refresh are the only unauthenticated routes in the API;
+ * <p>Login, accepting an invitation and refresh are the only unauthenticated routes;
  * everything else requires a valid access token.
  */
 @RestController
@@ -34,9 +35,18 @@ public class AuthController {
         return ResponseEntity.ok(authService.login(request));
     }
 
-    @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request));
+    /**
+     * Sets a password against an invitation and signs the person in.
+     *
+     * <p>Unauthenticated, necessarily: the caller has no account yet. The token is the
+     * whole of the authorisation, which is why it is 256 random bits, single use and
+     * short-lived.
+     */
+    @PostMapping("/invitations/{token}/accept")
+    public ResponseEntity<AuthResponse> accept(@PathVariable String token,
+                                               @Valid @RequestBody AcceptInvitationRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(authService.acceptInvitation(token, request));
     }
 
     /** Rotates the pair: the presented refresh token is revoked as the new one is issued. */

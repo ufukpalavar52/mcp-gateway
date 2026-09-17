@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Reading dispatched work, and asking for it to stop. */
 @Slf4j
@@ -27,6 +28,8 @@ import java.util.Map;
 public class RunServiceImpl implements RunService {
 
     private final RunRepository runRepository;
+    private final com.mcpgateway.repository.DefinitionRepository definitionRepository;
+    private final com.mcpgateway.service.DefinitionAccessGuard access;
     private final RunMapper mapper;
     private final CancellationPublisher cancellationPublisher;
     private final AuditService auditService;
@@ -34,7 +37,30 @@ public class RunServiceImpl implements RunService {
     @Override
     @Transactional(readOnly = true)
     public PageResponse<RunResponse> findAll(Pageable pageable) {
-        return PageResponse.from(runRepository.findAllBy(pageable), mapper::toResponse);
+        // The output of a definition somebody cannot reach is not theirs to read either:
+        // a command they may not run still printed what it printed, and the run history is
+        // where it stays afterwards.
+        if (access.unrestricted()) {
+            return PageResponse.from(runRepository.findAllBy(pageable), mapper::toResponse);
+        }
+
+        Set<Long> allowed = access.runnableIds(definitionRepository.findAll());
+        List<Run> mine = runRepository.findAll().stream()
+                .filter(run -> run.getDefinition() == null
+                        || allowed.contains(run.getDefinition().getId()))
+                .sorted(java.util.Comparator.comparing(Run::getId).reversed())
+                .toList();
+
+        int from = (int) Math.min(pageable.getOffset(), mine.size());
+        int to = Math.min(from + pageable.getPageSize(), mine.size());
+
+        return new PageResponse<>(
+                mine.subList(from, to).stream().map(mapper::toResponse).toList(),
+                pageable.getPageNumber(),
+                pageable.getPageSize(),
+                mine.size(),
+                (int) Math.ceil((double) mine.size() / pageable.getPageSize()),
+                to >= mine.size());
     }
 
     @Override

@@ -3,11 +3,14 @@ package com.mcpgateway.service.impl;
 import com.mcpgateway.common.exception.AuthenticationFailedException;
 import com.mcpgateway.common.exception.ConflictException;
 import com.mcpgateway.domain.entity.User;
+import com.mcpgateway.security.InvitationTokens;
+import com.mcpgateway.repository.UserInvitationRepository;
+import com.mcpgateway.domain.entity.UserInvitation;
 import com.mcpgateway.domain.enums.UserRole;
 import com.mcpgateway.domain.enums.UserStatus;
 import com.mcpgateway.dto.request.LoginRequest;
 import com.mcpgateway.dto.request.RefreshTokenRequest;
-import com.mcpgateway.dto.request.RegisterRequest;
+import com.mcpgateway.dto.request.AcceptInvitationRequest;
 import com.mcpgateway.dto.response.AuthResponse;
 import com.mcpgateway.mapper.UserMapper;
 import com.mcpgateway.repository.UserRepository;
@@ -47,6 +50,8 @@ public class AuthServiceImpl implements AuthService {
     private final TokenStore tokenStore;
     private final UserMapper userMapper;
     private final AuditService auditService;
+    private final UserInvitationRepository invitationRepository;
+    private final InvitationTokens invitationTokens;
 
     @Override
     @Transactional
@@ -67,22 +72,43 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmailIgnoreCase(request.email())) {
-            throw new ConflictException("An account with this email already exists");
+    public AuthResponse acceptInvitation(String token, AcceptInvitationRequest request) {
+        // Found by hash, because only the hash was kept. A token that matches nothing and a
+        // token that expired are told apart in the log and not on the screen: to somebody
+        // holding a link, "this link is no longer usable" is the whole of what is safe to
+        // say, and the difference between the two is a way to learn which links exist.
+        UserInvitation invitation = invitationRepository
+                .findByTokenHash(invitationTokens.hash(token))
+                .filter(found -> found.isRedeemable(Instant.now()))
+                .orElseThrow(() -> new AuthenticationFailedException("This invitation is no longer usable"));
+
+        if (userRepository.existsByEmailIgnoreCase(invitation.getEmail())) {
+            // Somebody was invited to an account they already have. The invitation is spent
+            // rather than left lying about, and they are sent to sign in with the password
+            // they already chose — creating a second account, or quietly overwriting the
+            // password on the first, would both be worse than saying so.
+            invitation.setAcceptedAt(Instant.now());
+            throw new ConflictException("An account with this email already exists; sign in instead");
         }
 
+        // Email and role off the invitation, never out of the request. Reading them from
+        // the body would let whoever holds one link make an account for any address, in any
+        // role — which is the whole of the authorisation this endpoint has.
         User user = User.builder()
-                .email(request.email())
+                .email(invitation.getEmail())
                 .fullName(request.fullName())
                 .passwordHash(passwordEncoder.encode(request.password()))
-                .role(UserRole.VIEWER)
+                .role(invitation.getRole())
                 .status(UserStatus.ACTIVE)
                 .build();
 
         User saved = userRepository.save(user);
-        auditService.recordAs(saved.getId(), saved.getEmail(), "auth.register", "user", saved.getId(), Map.of());
-        log.info("Registered account {}", saved.getId());
+        invitation.setAcceptedAt(Instant.now());
+
+        auditService.recordAs(saved.getId(), saved.getEmail(), "auth.invitation.accepted",
+                "user", saved.getId(), Map.of("invitation", invitation.getId()));
+        log.info("Invitation {} accepted as account {} ({})",
+                invitation.getId(), saved.getId(), saved.getRole());
 
         return issueTokens(saved);
     }

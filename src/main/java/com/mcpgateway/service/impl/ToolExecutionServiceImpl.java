@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -42,6 +43,7 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
 
     private final McpServerClient mcpServerClient;
     private final DefinitionRepository definitionRepository;
+    private final com.mcpgateway.service.DefinitionAccessGuard access;
     private final ToolCallRepository toolCallRepository;
     private final UserRepository userRepository;
     private final DefinitionMapper definitionMapper;
@@ -50,10 +52,34 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
     private final ConversationService conversationService;
 
 
+    /**
+     * The tools this caller may run, by name, or empty when they may run anything.
+     *
+     * <p>This is where the restriction is actually enforced on the prompt path, not the
+     * check that follows routing. With {@code execute} set, the MCP server plans and
+     * dispatches inside one call, so refusing after a tool name comes back would refuse a
+     * job that had already been queued. A tool that is never offered cannot be chosen.
+     *
+     * <p>Empty for an administrator, and empty means "no restriction" rather than "nothing"
+     * — the two have to look different or an administrator would be offered no tools at all.
+     */
+    private List<String> runnableNames() {
+        if (access.unrestricted()) {
+            return List.of();
+        }
+
+        return access.runnable(definitionRepository.findPublishedTools()).stream()
+                .map(Definition::getToolName)
+                .toList();
+    }
+
     @Override
     @Transactional
     public McpServerClient.ExecutionResult execute(String toolName, Map<String, Object> arguments) {
         Definition definition = definitionRepository.findByToolName(toolName)
+                // Not found rather than forbidden: to somebody with no access, a tool they
+                // may not reach and one that does not exist are the same fact.
+                .filter(access::mayRun)
                 .orElseThrow(() -> new ResourceNotFoundException("Tool", toolName));
 
         String actor = SecurityUtils.currentActorLabel();
@@ -77,6 +103,13 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
     @Transactional
     public PromptResponse approve(Long turnId) {
         ConversationService.Proposal proposal = conversationService.proposalOf(turnId);
+
+        // Checked again here rather than trusted from when the card was drawn. A proposal
+        // can sit waiting for days, and access can be taken away in between — approving is
+        // the moment the command runs, so it is the moment that has to be permitted.
+        definitionRepository.findByToolName(proposal.toolName())
+                .filter(access::mayRun)
+                .orElseThrow(() -> new ResourceNotFoundException("Tool", proposal.toolName()));
 
         // Approved by a person, so not unattended however it was first written — and
         // re-planned from the values it was shown with, not from its sentence alone. A step
@@ -115,7 +148,7 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
         try {
             result = mcpServerClient.routePrompt(
                     prompt, actor, execute, toolName, thread.turns(), thread.summary(),
-                    expect, unattended, actionId, arguments);
+                    expect, unattended, actionId, arguments, runnableNames());
         } catch (RuntimeException failure) {
             // A question that never reached an answer is still part of the conversation.
             // "The MCP server was down when I asked this" is exactly what somebody coming
@@ -136,6 +169,20 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
         Definition definition = result.toolName() == null
                 ? null
                 : definitionRepository.findByToolName(result.toolName()).orElse(null);
+
+        // The router was given the names this caller may run and should never come back
+        // with another one. This is the check that says so out loud if it ever does.
+        //
+        // It cannot undo anything: with execute set, the MCP server plans and dispatches
+        // inside the same call, so by the time a tool name is known the job may already be
+        // on the broker. The restriction is enforced by not offering the tool in the first
+        // place; this is the alarm, not the lock — which is why it logs at error and why
+        // the message says a bug rather than a permission.
+        if (definition != null && !access.mayRun(definition)) {
+            log.error("Router chose {} for {}, who may not run it. The allowed list sent "
+                    + "with the prompt was not honoured.", definition.getToolName(), actor);
+            throw new ResourceNotFoundException("Tool", definition.getToolName());
+        }
 
         recordPrompt(definition, actor, prompt, result, startedAt);
 

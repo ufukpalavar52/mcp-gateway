@@ -41,7 +41,9 @@ public class SecurityConfig {
      */
     private static final String[] PUBLIC_ENDPOINTS = {
             "/api/v1/auth/login",
-            "/api/v1/auth/register",
+            // Unauthenticated of necessity: the caller has no account yet, and the
+            // token in the path is the whole of the authorisation.
+            "/api/v1/auth/invitations/*/accept",
             "/api/v1/auth/refresh",
             "/actuator/health/**"
     };

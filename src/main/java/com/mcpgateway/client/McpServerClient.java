@@ -144,7 +144,8 @@ public class McpServerClient {
     public PromptResult routePrompt(String prompt, String actor, boolean execute,
                                     String toolName, List<PriorTurn> history,
                                     String summary, Object expect, boolean unattended,
-                                    Object actionId, Map<String, String> arguments) {
+                                    Object actionId, Map<String, String> arguments,
+                                    List<String> allowedTools) {
         try {
             PromptResult result = restClient.post()
                     .uri("/api/v1/prompts")
@@ -155,7 +156,7 @@ public class McpServerClient {
                         }
                     })
                     .body(request(prompt, actor, execute, toolName, history, summary, expect,
-                            unattended, actionId, arguments))
+                            unattended, actionId, arguments, allowedTools))
                     .retrieve()
                     .body(PromptResult.class);
 
@@ -182,7 +183,7 @@ public class McpServerClient {
     private static Map<String, Object> request(
             String prompt, String actor, boolean execute, String toolName,
             List<PriorTurn> history, String summary, Object expect, boolean unattended,
-            Object actionId, Map<String, String> arguments) {
+            Object actionId, Map<String, String> arguments, List<String> allowedTools) {
 
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("prompt", prompt);
@@ -221,6 +222,13 @@ public class McpServerClient {
         // The one action this step is for, when it is already known. A loop taking up an
         // action the plan set aside does not need a model to choose it again — and every
         // call not made is one the rate limit does not count.
+        // The tools this caller may run. Absent means no restriction — an empty list would
+        // be indistinguishable from "this person may run nothing", and an administrator
+        // would be offered an empty catalogue.
+        if (allowedTools != null && !allowedTools.isEmpty()) {
+            body.put("allowedTools", allowedTools);
+        }
+
         if (actionId instanceof java.util.Collection<?> ids) {
             if (!ids.isEmpty()) {
                 body.put("actionIds", ids);

@@ -1,5 +1,6 @@
 package com.mcpgateway.domain.entity;
 
+import com.mcpgateway.domain.enums.DefinitionAccess;
 import com.mcpgateway.domain.json.DefinitionInput;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -64,6 +65,16 @@ public class Definition extends BaseEntity {
     @Builder.Default
     @Column(nullable = false)
     private boolean enabled = true;
+
+    /**
+     * Whether everybody may reach this definition, or only the people named on it.
+     *
+     * <p>Defaults to OPEN, which is what every definition written before this field existed
+     * is — adding the column changed nothing about who could do what.
+     */
+    @Builder.Default
+    @Column(nullable = false)
+    private DefinitionAccess access = DefinitionAccess.OPEN;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")

@@ -24,23 +24,32 @@ public class ToolCatalogServiceImpl implements ToolCatalogService {
 
     private final DefinitionRepository definitionRepository;
     private final ToolMapper toolMapper;
+    private final com.mcpgateway.service.DefinitionAccessGuard access;
 
     @Override
     @Transactional(readOnly = true)
     public List<ToolResponse> findAll() {
-        return definitionRepository.findAll().stream().map(toolMapper::toResponse).toList();
+        // Filtered rather than refused: a listing is what somebody may work with, and one
+        // that showed tools that then refuse to run would be a menu of disappointments.
+        return access.runnable(definitionRepository.findAll()).stream()
+                .map(toolMapper::toResponse).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ToolResponse> findPublished() {
-        return definitionRepository.findPublishedTools().stream().map(toolMapper::toResponse).toList();
+        return access.runnable(definitionRepository.findPublishedTools()).stream()
+                .map(toolMapper::toResponse).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public ToolResponse findByToolName(String toolName) {
         Definition definition = definitionRepository.findByToolName(toolName)
+                // Not found rather than forbidden, and on purpose: to somebody with no
+                // access, a tool they may not reach and a tool that does not exist are the
+                // same fact. Telling them apart is a way to enumerate the catalogue.
+                .filter(access::mayRun)
                 .orElseThrow(() -> new ResourceNotFoundException("Tool", toolName));
 
         return toolMapper.toResponse(definition);

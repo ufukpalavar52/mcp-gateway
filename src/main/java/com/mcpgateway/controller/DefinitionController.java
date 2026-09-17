@@ -1,7 +1,9 @@
 package com.mcpgateway.controller;
 
 import com.mcpgateway.common.dto.PageResponse;
+import com.mcpgateway.dto.request.DefinitionAccessRequest;
 import com.mcpgateway.dto.request.DefinitionRequest;
+import com.mcpgateway.dto.response.DefinitionAccessResponse;
 import com.mcpgateway.dto.response.DefinitionResponse;
 import com.mcpgateway.dto.response.DefinitionSummaryResponse;
 import com.mcpgateway.service.intf.DefinitionService;
@@ -94,6 +96,27 @@ public class DefinitionController {
                                                           @PathVariable Long actionId) {
         return ResponseEntity.accepted()
                 .body(Map.of("runRef", schemaService.introspect(id, actionId)));
+    }
+
+    /**
+     * Who may reach this definition.
+     *
+     * <p>ADMIN only. Granting access is not the same kind of act as using it: somebody who
+     * may edit a definition can already change what it does, but deciding who else gets to
+     * is an administrative question, and leaving it with DEVELOPER would let anybody with
+     * that role hand themselves whatever they were not given.
+     */
+    @GetMapping("/{id}/access")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<DefinitionAccessResponse> access(@PathVariable Long id) {
+        return ResponseEntity.ok(definitionService.accessOf(id));
+    }
+
+    @PutMapping("/{id}/access")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<DefinitionAccessResponse> replaceAccess(
+            @PathVariable Long id, @Valid @RequestBody DefinitionAccessRequest request) {
+        return ResponseEntity.ok(definitionService.replaceAccess(id, request));
     }
 
     @DeleteMapping("/{id}")

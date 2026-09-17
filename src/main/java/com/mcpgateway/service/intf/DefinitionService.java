@@ -1,6 +1,8 @@
 package com.mcpgateway.service.intf;
 
+import com.mcpgateway.dto.request.DefinitionAccessRequest;
 import com.mcpgateway.dto.request.DefinitionRequest;
+import com.mcpgateway.dto.response.DefinitionAccessResponse;
 import com.mcpgateway.dto.response.DefinitionResponse;
 import com.mcpgateway.dto.response.DefinitionSummaryResponse;
 import org.springframework.data.domain.Pageable;
@@ -24,4 +26,15 @@ public interface DefinitionService {
     DefinitionResponse duplicate(Long id);
 
     void delete(Long id);
+
+    /** Who may reach this definition. */
+    DefinitionAccessResponse accessOf(Long id);
+
+    /**
+     * Replaces who may reach it.
+     *
+     * <p>Wholesale, the way a definition's actions are: the screen edits the whole list,
+     * and a partial update would need a diffing protocol the client does not speak.
+     */
+    DefinitionAccessResponse replaceAccess(Long id, DefinitionAccessRequest request);
 }

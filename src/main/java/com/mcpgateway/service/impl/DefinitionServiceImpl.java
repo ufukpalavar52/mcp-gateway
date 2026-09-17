@@ -16,6 +16,9 @@ import com.mcpgateway.domain.json.ActionConfig;
 import com.mcpgateway.dto.request.ActionRequest;
 import com.mcpgateway.repository.SecretRepository;
 import com.mcpgateway.dto.request.DefinitionInputRequest;
+import com.mcpgateway.domain.entity.DefinitionPermission;
+import com.mcpgateway.dto.request.DefinitionAccessRequest;
+import com.mcpgateway.dto.response.DefinitionAccessResponse;
 import com.mcpgateway.dto.request.DefinitionRequest;
 import com.mcpgateway.dto.response.DefinitionResponse;
 import com.mcpgateway.dto.response.DefinitionSummaryResponse;
@@ -37,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Definition lifecycle.
@@ -60,17 +64,51 @@ public class DefinitionServiceImpl implements DefinitionService {
     private final SecretRepository secretRepository;
     private final CipherClient cipherClient;
     private final ApplicationEventPublisher eventPublisher;
+    private final com.mcpgateway.service.DefinitionAccessGuard access;
+    private final com.mcpgateway.repository.DefinitionPermissionRepository permissionRepository;
 
     @Override
     @Transactional(readOnly = true)
     public PageResponse<DefinitionSummaryResponse> findAll(Pageable pageable) {
-        return PageResponse.from(definitionRepository.findAllBy(pageable), mapper::toSummary);
+        // An administrator sees everything, so the page comes straight from the database.
+        if (access.unrestricted()) {
+            return PageResponse.from(definitionRepository.findAllBy(pageable), mapper::toSummary);
+        }
+
+        // For everybody else the permitted set is worked out first and paged afterwards.
+        //
+        // Filtering the page the database returned would be wrong rather than merely
+        // inelegant: page two of a list whose first page lost four rows is not page two of
+        // anything, and the total would count definitions the reader cannot see. An
+        // installation holds tens of definitions, so paging them in memory is honest and
+        // cheap; teaching the query about permissions is the answer when it is thousands.
+        List<Definition> allowed = access.runnable(definitionRepository.findAll());
+
+        int from = (int) Math.min(pageable.getOffset(), allowed.size());
+        int to = Math.min(from + pageable.getPageSize(), allowed.size());
+        int pages = (int) Math.ceil((double) allowed.size() / pageable.getPageSize());
+
+        return new PageResponse<>(
+                allowed.subList(from, to).stream().map(mapper::toSummary).toList(),
+                pageable.getPageNumber(),
+                pageable.getPageSize(),
+                allowed.size(),
+                pages,
+                to >= allowed.size());
     }
 
     @Override
     @Transactional(readOnly = true)
     public DefinitionResponse findById(Long id) {
-        return mapper.toResponse(requireDefinitionWithActions(id));
+        Definition definition = requireDefinitionWithActions(id);
+
+        // Not found rather than forbidden: to somebody with no access, a definition they
+        // may not reach and one that is not there are the same fact.
+        if (!access.mayRun(definition)) {
+            throw new ResourceNotFoundException(RESOURCE, id);
+        }
+
+        return mapper.toResponse(definition);
     }
 
     @Override
@@ -103,7 +141,7 @@ public class DefinitionServiceImpl implements DefinitionService {
     @Override
     @Transactional
     public DefinitionResponse update(Long id, DefinitionRequest request) {
-        Definition definition = requireDefinitionWithActions(id);
+        Definition definition = requireEditable(id);
         assertNamesFree(request, id);
 
         definition.setName(request.name());
@@ -132,7 +170,7 @@ public class DefinitionServiceImpl implements DefinitionService {
     @Override
     @Transactional
     public DefinitionResponse toggleEnabled(Long id) {
-        Definition definition = requireDefinitionWithActions(id);
+        Definition definition = requireEditable(id);
         definition.setEnabled(!definition.isEnabled());
         definition.setUpdatedBy(currentUser());
 
@@ -146,7 +184,7 @@ public class DefinitionServiceImpl implements DefinitionService {
     @Override
     @Transactional
     public DefinitionResponse duplicate(Long id) {
-        Definition source = requireDefinitionWithActions(id);
+        Definition source = requireEditable(id);
 
         Definition copy = Definition.builder()
                 .name(freeName(source.getName()))
@@ -183,32 +221,135 @@ public class DefinitionServiceImpl implements DefinitionService {
     @Override
     @Transactional
     public void delete(Long id) {
-        Definition definition = definitionRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException(RESOURCE, id));
+        Definition definition = requireEditable(id);
 
-        List<Long> secretIds = definition.getActions().stream()
+        // What this definition points at, minus whatever anything else still points at.
+        //
+        // The comment that used to sit below said "nothing else points at these", and it
+        // counted only the sharing *inside* this definition. A secret has no owner — it is
+        // referenced by id from inside an action's JSON — and one SSH key is quite properly
+        // shared by every definition that reaches the same host. Three of them shared one
+        // here. Deleting any of the three took the key with it and the other two broke at
+        // the next run, saying the key was missing, with nothing to connect that to a
+        // deletion somebody had made days earlier.
+        //
+        // Sharing was never the mistake. The deletion was.
+        Set<Long> mine = secretsOf(definition);
+        mine.removeAll(stillWanted(id));
+
+        definitionRepository.delete(definition);
+
+        // After the definition, and only then: leaving these behind would accumulate rows
+        // nothing can reach and nobody would think to look for.
+        if (!mine.isEmpty()) {
+            definitionRepository.flush();
+            secretRepository.deleteAllById(mine);
+        }
+
+        auditService.record("definition.deleted", "definition", id,
+                Map.of("toolName", definition.getToolName()));
+        eventPublisher.publishEvent(new CatalogueChangedEvent("definition.deleted"));
+    }
+
+    /**
+     * The definition, if this caller may change it.
+     *
+     * <p>Not found rather than forbidden, exactly as reading one is: somebody who cannot
+     * see a definition should not learn it exists by being refused permission to edit it.
+     */
+    private Definition requireEditable(Long id) {
+        Definition definition = requireDefinitionWithActions(id);
+
+        if (!access.mayEdit(definition)) {
+            throw new ResourceNotFoundException(RESOURCE, id);
+        }
+
+        return definition;
+    }
+
+    /** Every secret this definition's actions reference, by id. */
+    private static Set<Long> secretsOf(Definition definition) {
+        return definition.getActions().stream()
                 .map(Action::getConfig)
                 .flatMap(config -> java.util.stream.Stream.of(
                         config.getPrivateKeySecretId(),
                         config.getPassphraseSecretId(),
                         config.getPasswordSecretId()))
                 .filter(java.util.Objects::nonNull)
-                .distinct()
-                .toList();
+                .collect(java.util.stream.Collectors.toCollection(java.util.HashSet::new));
+    }
 
-        definitionRepository.delete(definition);
+    /**
+     * Secrets some other definition is still using.
+     *
+     * <p>Read across every other definition rather than queried out of the JSON: the
+     * references live inside an action's JSONB and there is no foreign key to ask. An
+     * installation holds tens of definitions, not thousands, so the honest loop is cheaper
+     * than the query that would avoid it — and far easier to be sure of.
+     */
+    private Set<Long> stillWanted(Long excluding) {
+        return definitionRepository.findAll().stream()
+                .filter(other -> !other.getId().equals(excluding))
+                .flatMap(other -> secretsOf(other).stream())
+                .collect(java.util.stream.Collectors.toSet());
+    }
 
-        // After the definition, and only then: nothing else points at these, and leaving
-        // them behind would accumulate rows nothing can reach and nobody would think to
-        // look for. Distinct, because one secret may be shared by two actions.
-        if (!secretIds.isEmpty()) {
-            definitionRepository.flush();
-            secretRepository.deleteAllById(secretIds);
+    @Override
+    @Transactional(readOnly = true)
+    public DefinitionAccessResponse accessOf(Long id) {
+        Definition definition = requireEditable(id);
+
+        return new DefinitionAccessResponse(
+                definition.getAccess(),
+                permissionRepository.findByDefinitionId(id).stream()
+                        .map(row -> new DefinitionAccessResponse.Grant(
+                                row.getUser().getId(),
+                                row.getUser().getEmail(),
+                                row.getUser().getFullName(),
+                                row.isCanRun(),
+                                row.isCanEdit()))
+                        .toList());
+    }
+
+    @Override
+    @Transactional
+    public DefinitionAccessResponse replaceAccess(Long id, DefinitionAccessRequest request) {
+        Definition definition = requireEditable(id);
+
+        definition.setAccess(request.access());
+
+        // Replaced wholesale, like the actions: the screen edits the whole list and a
+        // partial update would need a diffing protocol the client does not speak.
+        permissionRepository.deleteAll(permissionRepository.findByDefinitionId(id));
+
+        for (DefinitionAccessRequest.Grant grant : request.permissions() == null
+                ? List.<DefinitionAccessRequest.Grant>of() : request.permissions()) {
+
+            // A row that grants nothing is not a restriction, it is a line nobody can read.
+            // Somebody meaning "take their access away" removes them from the list.
+            if (!grant.canRun() && !grant.canEdit()) {
+                continue;
+            }
+
+            permissionRepository.save(DefinitionPermission.builder()
+                    .definition(definition)
+                    .user(userRepository.findById(grant.userId())
+                            .orElseThrow(() -> new ResourceNotFoundException("User", grant.userId())))
+                    .canRun(grant.canRun())
+                    .canEdit(grant.canEdit())
+                    .build());
         }
 
-        auditService.record("definition.deleted", "definition", id,
-                Map.of("toolName", definition.getToolName()));
-        eventPublisher.publishEvent(new CatalogueChangedEvent("definition.deleted"));
+        definitionRepository.save(definition);
+        auditService.record("definition.access.changed", "definition", id,
+                Map.of("access", request.access().name(),
+                        "granted", request.permissions() == null ? 0 : request.permissions().size()));
+
+        // The catalogue a caller sees depends on this, so it is rebuilt like any other
+        // change to what a definition is.
+        eventPublisher.publishEvent(new CatalogueChangedEvent("definition.access.changed"));
+
+        return accessOf(id);
     }
 
     /* ------------------------------- helpers ------------------------------- */

@@ -87,7 +87,7 @@ class McpServerClientTest {
         @Test
         void an_argument_reaches_the_request_body() throws IOException {
             client.routePrompt("sil", "u@e", true, "users", List.of(), "", "",
-                    true, 4, Map.of("id", "59"));
+                    true, 4, Map.of("id", "59"), List.of());
 
             assertThat(sent().path("arguments").path("id").asText()).isEqualTo("59");
         }
@@ -96,7 +96,7 @@ class McpServerClientTest {
         void nothing_is_sent_when_there_is_nothing_to_send() throws IOException {
             // An ordinary prompt has none, and an empty object is not the same as absent.
             client.routePrompt("getir", "u@e", true, "users", List.of(), "", "",
-                    false, null, Map.of());
+                    false, null, Map.of(), List.of());
 
             assertThat(sent().has("arguments")).isFalse();
         }

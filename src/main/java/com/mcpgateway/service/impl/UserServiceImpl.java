@@ -26,12 +26,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.Map;
 
 /** Account administration, including the invitation flow. */
@@ -42,13 +37,13 @@ public class UserServiceImpl implements UserService {
     private static final String RESOURCE = "User";
 
     private final InvitationProperties invitationProperties;
+    private final com.mcpgateway.security.InvitationTokens invitationTokens;
     private final UserRepository userRepository;
     private final UserInvitationRepository invitationRepository;
     private final TeamRepository teamRepository;
     private final UserMapper mapper;
     private final AuditService auditService;
     private final TokenStore tokenStore;
-    private final SecureRandom secureRandom = new SecureRandom();
 
     @Override
     @Transactional(readOnly = true)
@@ -101,13 +96,13 @@ public class UserServiceImpl implements UserService {
         }
 
         // The raw token is returned once; only its hash is persisted.
-        String token = generateToken();
+        String token = invitationTokens.mint();
 
         UserInvitation invitation = UserInvitation.builder()
                 .email(request.email())
                 .role(request.role())
                 .team(request.teamId() == null ? null : requireTeam(request.teamId()))
-                .tokenHash(hash(token))
+                .tokenHash(invitationTokens.hash(token))
                 .invitedBy(SecurityUtils.currentUserId().flatMap(userRepository::findById).orElse(null))
                 .expiresAt(Instant.now().plus(invitationProperties.getTtl()))
                 .build();
@@ -162,18 +157,5 @@ public class UserServiceImpl implements UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("Team", id));
     }
 
-    private String generateToken() {
-        byte[] bytes = new byte[32];
-        secureRandom.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
 
-    private String hash(String token) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return Base64.getEncoder().encodeToString(digest.digest(token.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 is required but unavailable", ex);
-        }
-    }
 }
