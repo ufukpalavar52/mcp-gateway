@@ -71,6 +71,21 @@ public record ConversationResponse(String conversationRef,
                         */
                        boolean awaitingApproval,
 
+                       /**
+                        * What was asked, for a step the goal loop wrote.
+                        *
+                        * <p>Null for a turn somebody typed — it is its own goal and the
+                        * prompt is already on the card.
+                        *
+                        * <p>A conversation can hold more than one goal at once: leave a
+                        * step unapproved, ask for something else, come back and approve it,
+                        * and the first goal carries on from where it stopped. Without this
+                        * the card says only "approve this command" and gives no way to tell
+                        * which of two requests it belongs to — which reads as the console
+                        * going back to something already finished.
+                        */
+                       String goalPrompt,
+
                        Instant createdAt) {
     }
 }

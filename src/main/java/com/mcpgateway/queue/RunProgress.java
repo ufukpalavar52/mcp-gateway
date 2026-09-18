@@ -45,7 +45,20 @@ public class RunProgress {
     private final Map<String, Watched> byRun = new ConcurrentHashMap<>();
 
     /** Appends a chunk to the run's live view. */
-    public void append(String runRef, String host, String stdout, String stderr, boolean done) {
+    /**
+     * Keyed by the action as well as the job, because a job can hold several.
+     *
+     * <p>It was keyed by the job alone, and a job with two actions then had one buffer
+     * between them: both steps were handed the same live output, so a screen showing every
+     * step drew the same log twice — the write step displaying what the run step was
+     * printing, each box scrolled somewhere different, reading as two separate logs that
+     * disagreed.
+     *
+     * <p>The executor has always said which action a chunk belongs to. The gateway was
+     * throwing that away at this line.
+     */
+    public void append(String runRef, String actionRunRef, String host,
+                       String stdout, String stderr, boolean done) {
         if (runRef == null || runRef.isBlank()) {
             return;
         }
@@ -54,12 +67,12 @@ public class RunProgress {
 
         Watched watched = byRun.computeIfAbsent(runRef, ignored -> new Watched());
         watched.touch();
-        watched.hosts.computeIfAbsent(host == null ? "" : host, ignored -> new Tail())
+        watched.hosts.computeIfAbsent(key(actionRunRef, host), ignored -> new Tail())
                 .add(stdout, stderr, done);
     }
 
     /** What has arrived for this run, per host, oldest first. Empty when nothing has. */
-    public List<Live> of(String runRef) {
+    public List<Live> of(String runRef, String actionRunRef) {
         Watched watched = runRef == null ? null : byRun.get(runRef);
 
         if (watched == null) {
@@ -67,8 +80,15 @@ public class RunProgress {
         }
 
         List<Live> live = new ArrayList<>();
-        watched.hosts.forEach((host, tail) ->
-                live.add(new Live(host, tail.out.toString(), tail.err.toString(), tail.done)));
+        String prefix = prefix(actionRunRef);
+
+        watched.hosts.forEach((key, tail) -> {
+            if (!key.startsWith(prefix)) {
+                return;
+            }
+            live.add(new Live(key.substring(prefix.length()),
+                    tail.out.toString(), tail.err.toString(), tail.done));
+        });
 
         return live;
     }
@@ -131,6 +151,22 @@ public class RunProgress {
      * lines they want are the ones that just arrived. The stored output, which keeps the
      * beginning, is the record.
      */
+    /**
+     * One action's output on one host.
+     *
+     * <p>A single map rather than a map of maps: what is being kept is a tail per pair, and
+     * nesting would add a level nobody ever iterates on its own.
+     */
+    private static String key(String actionRunRef, String host) {
+        return prefix(actionRunRef) + (host == null ? "" : host);
+    }
+
+    private static String prefix(String actionRunRef) {
+        // The separator is a character an action reference and a host name both lack, so
+        // splitting on it cannot cut a name in half.
+        return (actionRunRef == null ? "" : actionRunRef) + "\u0000";
+    }
+
     private static final class Tail {
         private final StringBuilder out = new StringBuilder();
         private final StringBuilder err = new StringBuilder();

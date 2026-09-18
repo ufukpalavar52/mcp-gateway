@@ -47,7 +47,7 @@ public class RunMapper {
      * own would mean every reader learning both.
      */
     private List<RunResponse.Target> watching(Run run) {
-        return progress.of(run.getRunRef()).stream()
+        return progress.of(run.getRunRef(), run.getActionRef()).stream()
                 .map(live -> new RunResponse.Target(
                         live.host(),
                         // Running, whatever the row says: the row is written when the

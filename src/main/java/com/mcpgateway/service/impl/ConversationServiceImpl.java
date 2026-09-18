@@ -569,6 +569,7 @@ public class ConversationServiceImpl implements ConversationService {
                 turn.getRunRef(),
                 turn.getFailure(),
                 awaitsApproval(turn),
+                turn.getGoalTurn() == null ? null : turn.getGoalTurn().getPrompt(),
                 turn.getCreatedAt());
     }
 

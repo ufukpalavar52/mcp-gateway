@@ -27,7 +27,8 @@ public class RunProgressListener {
             return;
         }
 
-        progress.append(chunk.runId(), chunk.host(), chunk.stdout(), chunk.stderr(),
+        progress.append(chunk.runId(), chunk.actionRunId(), chunk.host(),
+                chunk.stdout(), chunk.stderr(),
                 Boolean.TRUE.equals(chunk.done()));
     }
 

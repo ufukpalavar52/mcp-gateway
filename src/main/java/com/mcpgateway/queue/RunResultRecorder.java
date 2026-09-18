@@ -33,8 +33,19 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class RunResultRecorder {
 
-    /** How much of a target's output is kept. Enough to see what happened, not a log store. */
-    private static final int EXCERPT_LIMIT = 4000;
+    /**
+     * How much of a target's output is kept.
+     *
+     * <p>The same ceiling the live view holds, and that is the whole reason for the number:
+     * it was 4000 characters while a watcher kept 64 KB, so somebody could follow a command
+     * printing for a minute and then find one sixteenth of it in the history. What you
+     * watched and what you can read afterwards should be the same thing.
+     *
+     * <p>Still a ceiling, and still not a log store. A command with more than this to say
+     * should write a file and be asked for it — the marker below means a truncated output
+     * never reads as a command that printed exactly this much.
+     */
+    private static final int EXCERPT_LIMIT = 64 * 1024;
 
     /** How many rows are kept. A result set is a sample here, not a data warehouse. */
     private static final int ROW_LIMIT = 500;

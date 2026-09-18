@@ -221,7 +221,10 @@ class RunResultRecorderTest {
         recording(ActionKind.REST);
 
         String body = "{\"count\": 2, \"data\": ["
-                + "{\"id\": 1, \"name\": \"" + "a".repeat(5000) + "\"},"
+                // Past the excerpt ceiling, which is the live view's 64 KB rather than the
+                // 4000 characters it used to be: what somebody watched and what they can
+                // read afterwards are the same thing now.
+                + "{\"id\": 1, \"name\": \"" + "a".repeat(70_000) + "\"},"
                 + "{\"id\": 2, \"name\": \"veli\"}]}";
 
         ExecutionResult.Target answered = new ExecutionResult.Target(
