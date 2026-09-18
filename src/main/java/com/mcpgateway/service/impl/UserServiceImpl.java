@@ -27,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -53,8 +54,14 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional(readOnly = true)
-    public PageResponse<UserResponse> findAll(Pageable pageable) {
-        return PageResponse.from(userRepository.findAll(pageable), mapper::toResponse);
+    public PageResponse<UserResponse> findAll(String search, Pageable pageable) {
+        // Blank and absent mean the same thing: everybody. A search box that has been
+        // cleared should not be a search for the empty string.
+        return PageResponse.from(
+                StringUtils.hasText(search)
+                        ? userRepository.search(search.trim(), pageable)
+                        : userRepository.findAll(pageable),
+                mapper::toResponse);
     }
 
     @Override

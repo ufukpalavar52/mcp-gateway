@@ -11,7 +11,7 @@ import org.springframework.data.domain.Pageable;
 /** Account administration. */
 public interface UserService {
 
-    PageResponse<UserResponse> findAll(Pageable pageable);
+    PageResponse<UserResponse> findAll(String search, Pageable pageable);
 
     UserResponse findById(Long id);
 
