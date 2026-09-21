@@ -4,11 +4,14 @@ import com.mcpgateway.domain.entity.Run;
 import com.mcpgateway.domain.entity.RunTarget;
 import com.mcpgateway.domain.enums.TargetStatus;
 import com.mcpgateway.dto.response.RunResponse;
+import com.mcpgateway.queue.ExecutorPresence;
 import com.mcpgateway.queue.RunProgress;
 import com.mcpgateway.service.RunOutputCipher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 /** Entity to response translation for runs. */
@@ -16,8 +19,18 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RunMapper {
 
+    /**
+     * Long enough that a dispatch is never mistaken for a stall.
+     *
+     * <p>An executor reconnecting takes a second or two, and a job published into that
+     * gap is picked up the moment it returns. Warning about those would train the reader
+     * to ignore the warning, which costs more than the seconds it saves.
+     */
+    private static final Duration SETTLING = Duration.ofSeconds(20);
+
     private final RunOutputCipher outputCipher;
     private final RunProgress progress;
+    private final ExecutorPresence executors;
 
     public RunResponse toResponse(Run run) {
         // A run that has not finished has no stored output yet — it is written once, when
@@ -37,6 +50,30 @@ public class RunMapper {
     /** Whether the executor has reported on this run. */
     private static boolean finished(Run run) {
         return run.getFinishedAt() != null;
+    }
+
+    /**
+     * Whether this run is waiting on an executor that is not there.
+     *
+     * <p>Three facts, and all three are needed. It has not finished; it was dispatched
+     * long enough ago that a reconnect would have completed; and nothing is consuming the
+     * job queue. The last is asked of the broker rather than guessed from silence — a
+     * command can print nothing for ten minutes and be perfectly healthy, and time alone
+     * cannot tell that apart from nobody listening.
+     *
+     * <p>{@code startedAt} is the dispatch for an unfinished run; the executor's real
+     * start time overwrites it only when the result arrives.
+     */
+    private boolean stalled(Run run) {
+        if (finished(run) || run.getStartedAt() == null) {
+            return false;
+        }
+
+        if (run.getStartedAt().isAfter(Instant.now().minus(SETTLING))) {
+            return false;
+        }
+
+        return !executors.listening();
     }
 
     /**
@@ -85,7 +122,8 @@ public class RunMapper {
                 targets,
                 // Filled in by the caller that knows about the whole job; one action knows
                 // nothing about its siblings.
-                null);
+                null,
+                stalled(run));
     }
 
     /**

@@ -87,7 +87,11 @@ public class RunServiceImpl implements RunService {
                         first.id(), first.runRef(), first.actionRef(), first.definitionId(),
                         first.toolName(), first.actionName(), first.actorLabel(),
                         first.purpose(), first.status(), first.error(), first.statement(),
-                        first.startedAt(), first.finishedAt(), first.targets(), steps);
+                        first.startedAt(), first.finishedAt(), first.targets(), steps,
+                        // Any step of a job waiting on an executor that is not there makes
+                        // the whole job stuck: they share one queue, and a later action
+                        // cannot start until the one in front of it reports.
+                        steps.stream().anyMatch(RunResponse::stalled));
     }
 
     @Override

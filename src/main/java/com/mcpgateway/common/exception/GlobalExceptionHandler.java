@@ -52,9 +52,31 @@ public class GlobalExceptionHandler {
                 ex.getViolations()));
     }
 
-    /** Every deliberate API failure carries its own status and code. */
+    /**
+     * Every deliberate API failure carries its own status and code.
+     *
+     * <p>Logged when the status says this service failed, and silent when it says the
+     * caller did. A tool that was not found or a password that was wrong is ordinary
+     * traffic; logging those buries the entries that matter in the ones that do not.
+     *
+     * <p>Silent for every status was the earlier rule, and it cost a diagnosis. On
+     * 21 September a prompt came back "Could not route the prompt: I/O error ... Request
+     * cancelled" — a 503 — and the gateway log had nothing at all for that minute: not the
+     * error, not the request, nothing. The MCP server's own log showed two model calls
+     * answering normally, so the one process that knew why the call was abandoned was the
+     * one that said nothing about it. <b>An error a person can read on a screen and not
+     * find in a log is an error that cannot be diagnosed twice.</b>
+     *
+     * <p>The cause travels with it. A {@code RestClientException} wrapped in this carries
+     * the only description of what actually went wrong on the wire, and the message alone
+     * — "Could not route the prompt" — names the intention rather than the failure.
+     */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ApiError> handleApiException(ApiException ex, HttpServletRequest request) {
+        if (ex.getStatus().is5xxServerError()) {
+            log.error("{} on {}", ex.getErrorCode(), request.getRequestURI(), ex);
+        }
+
         return ResponseEntity.status(ex.getStatus())
                 .body(ApiError.of(ex.getStatus().value(), ex.getErrorCode(), ex.getMessage(), request.getRequestURI()));
     }

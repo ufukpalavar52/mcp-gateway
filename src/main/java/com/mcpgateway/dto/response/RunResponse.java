@@ -53,7 +53,26 @@ public record RunResponse(Long id,
                            * fields above stay the first action either way, so anything that
                            * only wants to show a result does not have to know about this.
                            */
-                          List<RunResponse> steps) {
+                          List<RunResponse> steps,
+
+                          /**
+                           * Nothing is going to finish this run.
+                           *
+                           * <p>True when it is still running, has been for longer than a
+                           * dispatch takes, and no executor is consuming the job queue. The
+                           * job is sitting on the broker and will stay there.
+                           *
+                           * <p>Deliberately not folded into {@code status}. The run really is
+                           * running as far as this service is concerned; rewriting the status
+                           * would be inventing an outcome nobody observed. This says the one
+                           * thing that is known — that nobody is listening — and leaves the
+                           * run alone.
+                           *
+                           * <p>Never true out of uncertainty. A broker that cannot be asked
+                           * answers false, because sending somebody to look for a fault that
+                           * is not there is the cost this field exists to avoid.
+                           */
+                          boolean stalled) {
 
     public record Target(String address,
                          TargetStatus status,
