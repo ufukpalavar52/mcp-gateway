@@ -2,6 +2,7 @@ package com.mcpgateway.controller;
 
 import com.mcpgateway.client.McpServerClient;
 import com.mcpgateway.dto.request.PromptRequest;
+import com.mcpgateway.dto.request.ToolExecuteRequest;
 import com.mcpgateway.dto.response.PromptResponse;
 import com.mcpgateway.service.intf.ConversationService;
 import com.mcpgateway.service.intf.ToolExecutionService;
@@ -31,14 +32,26 @@ public class ToolExecutionController {
     private final ToolExecutionService toolExecutionService;
     private final ConversationService conversationService;
 
-    /** Asks the MCP server what this call resolves to. Nothing is executed. */
+    /**
+     * Asks the MCP server what this call resolves to, and runs it unless it needs a yes.
+     *
+     * <p>An action its operator marked as needing approval comes back planned and
+     * undispatched. Approving it is this same call again carrying {@code expect}: the
+     * command that was on the screen. Approval is of a command rather than of an
+     * intention, because planning is not deterministic and agreement to one sentence must
+     * not carry to whatever the next plan happens to say.
+     */
     @PostMapping("/{toolName}/execute")
     @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
     public ResponseEntity<McpServerClient.ExecutionResult> execute(
             @PathVariable String toolName,
-            @RequestBody(required = false) Map<String, Object> arguments) {
+            @RequestBody(required = false) ToolExecuteRequest request) {
 
-        return ResponseEntity.ok(toolExecutionService.execute(toolName, arguments));
+        ToolExecuteRequest asked =
+                request == null ? new ToolExecuteRequest(null, null, null) : request;
+
+        return ResponseEntity.ok(toolExecutionService.execute(
+                toolName, asked.arguments(), asked.expect(), asked.expectAll()));
     }
 
     /**

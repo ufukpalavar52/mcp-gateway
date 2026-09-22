@@ -14,7 +14,8 @@ public interface ToolExecutionService {
      * <p>The decision belongs to the MCP server; this service only supplies the caller's
      * identity and writes the audit trail, because it is the one that owns the database.
      */
-    McpServerClient.ExecutionResult execute(String toolName, Map<String, Object> arguments);
+    McpServerClient.ExecutionResult execute(String toolName, Map<String, Object> arguments,
+                                            String expect, java.util.List<String> expectAll);
 
     /**
      * Routes a prompt to a tool and records what it turned into.

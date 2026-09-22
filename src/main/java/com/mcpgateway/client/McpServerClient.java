@@ -105,7 +105,8 @@ public class McpServerClient {
      * <p>The MCP server decides; it does not execute. Whether the plan is then carried
      * out is the executor's business, and today nothing does.
      */
-    public ExecutionResult requestExecution(String toolName, Map<String, Object> arguments, String actor) {
+    public ExecutionResult requestExecution(String toolName, Map<String, Object> arguments,
+                                            String actor, String expect, List<String> expectAll) {
         try {
             ExecutionResult result = restClient.post()
                     .uri("/api/v1/executions")
@@ -118,7 +119,11 @@ public class McpServerClient {
                     .body(Map.of(
                             "toolName", toolName,
                             "arguments", arguments == null ? Map.of() : arguments,
-                            "actor", actor == null ? "" : actor))
+                            "actor", actor == null ? "" : actor,
+                            // The approval, when this call is one. Empty means the caller
+                            // has not been shown a command yet and is asking to see it.
+                            "expect", expect == null ? "" : expect,
+                            "expectAll", expectAll == null ? List.of() : expectAll))
                     .retrieve()
                     .body(ExecutionResult.class);
 

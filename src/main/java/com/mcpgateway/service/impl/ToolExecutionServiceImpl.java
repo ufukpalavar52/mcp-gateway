@@ -78,7 +78,8 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
 
     @Override
     @Transactional
-    public McpServerClient.ExecutionResult execute(String toolName, Map<String, Object> arguments) {
+    public McpServerClient.ExecutionResult execute(String toolName, Map<String, Object> arguments,
+                                                   String expect, List<String> expectAll) {
         Definition definition = definitionRepository.findByToolName(toolName)
                 // Not found rather than forbidden: to somebody with no access, a tool they
                 // may not reach and one that does not exist are the same fact.
@@ -88,8 +89,9 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
         String actor = SecurityUtils.currentActorLabel();
         Instant startedAt = Instant.now();
 
-        McpServerClient.ExecutionResult result =
-                withCatalogue(() -> mcpServerClient.requestExecution(toolName, arguments, actor));
+        McpServerClient.ExecutionResult result = withCatalogue(
+                () -> mcpServerClient.requestExecution(toolName, arguments, actor,
+                        expect, expectAll));
 
         recordCall(definition, actor, result, startedAt);
         recordRuns(definition, actor, arguments, result);
