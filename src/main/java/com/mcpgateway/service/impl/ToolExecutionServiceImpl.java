@@ -1,6 +1,7 @@
 package com.mcpgateway.service.impl;
 
 import com.mcpgateway.client.McpServerClient;
+import com.mcpgateway.client.McpServerRefusedException;
 import com.mcpgateway.dto.response.PromptResponse;
 import com.mcpgateway.domain.enums.LogLevel;
 import com.mcpgateway.domain.entity.Definition;
@@ -20,6 +21,7 @@ import com.mcpgateway.common.exception.ResourceNotFoundException;
 import com.mcpgateway.mapper.DefinitionMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +29,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * Bridges a tool invocation to the MCP server.
@@ -86,7 +89,7 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
         Instant startedAt = Instant.now();
 
         McpServerClient.ExecutionResult result =
-                mcpServerClient.requestExecution(toolName, arguments, actor);
+                withCatalogue(() -> mcpServerClient.requestExecution(toolName, arguments, actor));
 
         recordCall(definition, actor, result, startedAt);
         recordRuns(definition, actor, arguments, result);
@@ -146,9 +149,9 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
 
         McpServerClient.PromptResult result;
         try {
-            result = mcpServerClient.routePrompt(
+            result = withCatalogue(() -> mcpServerClient.routePrompt(
                     prompt, actor, execute, toolName, thread.turns(), thread.summary(),
-                    expect, unattended, actionId, arguments, runnableNames());
+                    expect, unattended, actionId, arguments, runnableNames()));
         } catch (RuntimeException failure) {
             // A question that never reached an answer is still part of the conversation.
             // "The MCP server was down when I asked this" is exactly what somebody coming
@@ -266,6 +269,41 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
                 .toList();
 
         return mcpServerClient.publishCatalogue(definitions);
+    }
+
+    /**
+     * Runs a call against the MCP server, republishing the catalogue if it has lost it.
+     *
+     * <p>The MCP server holds its catalogue in memory and reaches back for nothing. That is
+     * deliberate and stated in its own source: fetching it would mean that service holding
+     * gateway credentials, and an empty catalogue at start up is the price. So a restart
+     * there leaves it answering <em>Unknown tool: x. Publish the catalogue first.</em> to
+     * every request until somebody notices.
+     *
+     * <p>Somebody did, twice, by hand. The party that can fix it is this one — it owns the
+     * definitions and already holds the credentials — and it was being told the problem in
+     * plain words and passing them to the user instead.
+     *
+     * <p>On the status rather than the sentence. A 404 for a tool this service published
+     * means the two copies have diverged, whatever words came with it; matching the message
+     * would tie this to a string in another repository that nobody would think to keep.
+     *
+     * <p>Once. If a fresh catalogue does not fix it the tool really is gone, and a second
+     * attempt would turn a clear answer into a loop.
+     */
+    private <T> T withCatalogue(Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (McpServerRefusedException refusal) {
+            if (refusal.getStatus() != HttpStatus.NOT_FOUND) {
+                throw refusal;
+            }
+
+            log.info("The MCP server does not know this tool; republishing the catalogue");
+            publishCatalogue();
+
+            return call.get();
+        }
     }
 
     /**
