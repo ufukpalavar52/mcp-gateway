@@ -13,10 +13,12 @@ import java.util.Map;
  * written to access logs.
  *
  * @param arguments what the tool was called with
+ * @param actionId  which of the tool's actions is wanted, for a definition with several
  * @param expect    the command a person was shown and agreed to, empty on a first ask
  * @param expectAll every command agreed to at once, when the plan showed more than one
  */
 public record ToolExecuteRequest(Map<String, Object> arguments,
+                                 Long actionId,
                                  String expect,
                                  List<String> expectAll) {
 

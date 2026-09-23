@@ -15,6 +15,7 @@ public interface ToolExecutionService {
      * identity and writes the audit trail, because it is the one that owns the database.
      */
     McpServerClient.ExecutionResult execute(String toolName, Map<String, Object> arguments,
+                                            Long actionId,
                                             String expect, java.util.List<String> expectAll);
 
     /**

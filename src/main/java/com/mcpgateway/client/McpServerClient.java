@@ -106,7 +106,8 @@ public class McpServerClient {
      * out is the executor's business, and today nothing does.
      */
     public ExecutionResult requestExecution(String toolName, Map<String, Object> arguments,
-                                            String actor, String expect, List<String> expectAll) {
+                                            String actor, Long actionId,
+                                            String expect, List<String> expectAll) {
         try {
             ExecutionResult result = restClient.post()
                     .uri("/api/v1/executions")
@@ -116,14 +117,7 @@ public class McpServerClient {
                             headers.set(TOKEN_HEADER, properties.getToken());
                         }
                     })
-                    .body(Map.of(
-                            "toolName", toolName,
-                            "arguments", arguments == null ? Map.of() : arguments,
-                            "actor", actor == null ? "" : actor,
-                            // The approval, when this call is one. Empty means the caller
-                            // has not been shown a command yet and is asking to see it.
-                            "expect", expect == null ? "" : expect,
-                            "expectAll", expectAll == null ? List.of() : expectAll))
+                    .body(executionBody(toolName, arguments, actor, actionId, expect, expectAll))
                     .retrieve()
                     .body(ExecutionResult.class);
 
@@ -137,6 +131,32 @@ public class McpServerClient {
         } catch (RestClientException ex) {
             throw new McpServerUnavailableException("Could not reach the MCP server", ex);
         }
+    }
+
+    /**
+     * The execution payload.
+     *
+     * <p>A mutable map rather than {@code Map.of}, which rejects a null value: an
+     * unnamed action is absent rather than null, so a definition with one action sends
+     * nothing about a choice it does not have to make.
+     */
+    private static Map<String, Object> executionBody(String toolName,
+                                                     Map<String, Object> arguments,
+                                                     String actor, Long actionId,
+                                                     String expect, List<String> expectAll) {
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("toolName", toolName);
+        body.put("arguments", arguments == null ? Map.of() : arguments);
+        body.put("actor", actor == null ? "" : actor);
+        // The approval, when this call is one. Empty means the caller has not been shown
+        // a command yet and is asking to see it.
+        body.put("expect", expect == null ? "" : expect);
+        body.put("expectAll", expectAll == null ? List.of() : expectAll);
+
+        if (actionId != null) {
+            body.put("actionId", actionId);
+        }
+        return body;
     }
 
     /**

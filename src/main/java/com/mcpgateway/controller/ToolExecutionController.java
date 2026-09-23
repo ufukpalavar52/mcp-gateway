@@ -48,10 +48,11 @@ public class ToolExecutionController {
             @RequestBody(required = false) ToolExecuteRequest request) {
 
         ToolExecuteRequest asked =
-                request == null ? new ToolExecuteRequest(null, null, null) : request;
+                request == null ? new ToolExecuteRequest(null, null, null, null) : request;
 
         return ResponseEntity.ok(toolExecutionService.execute(
-                toolName, asked.arguments(), asked.expect(), asked.expectAll()));
+                toolName, asked.arguments(), asked.actionId(),
+                asked.expect(), asked.expectAll()));
     }
 
     /**

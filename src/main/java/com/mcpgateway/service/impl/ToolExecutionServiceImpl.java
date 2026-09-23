@@ -79,6 +79,7 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
     @Override
     @Transactional
     public McpServerClient.ExecutionResult execute(String toolName, Map<String, Object> arguments,
+                                                   Long actionId,
                                                    String expect, List<String> expectAll) {
         Definition definition = definitionRepository.findByToolName(toolName)
                 // Not found rather than forbidden: to somebody with no access, a tool they
@@ -91,7 +92,7 @@ public class ToolExecutionServiceImpl implements ToolExecutionService {
 
         McpServerClient.ExecutionResult result = withCatalogue(
                 () -> mcpServerClient.requestExecution(toolName, arguments, actor,
-                        expect, expectAll));
+                        actionId, expect, expectAll));
 
         recordCall(definition, actor, result, startedAt);
         recordRuns(definition, actor, arguments, result);

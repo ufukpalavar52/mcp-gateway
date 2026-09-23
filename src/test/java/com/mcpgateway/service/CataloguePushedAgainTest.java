@@ -68,7 +68,7 @@ class CataloguePushedAgainTest {
         when(access.mayRun(any())).thenReturn(true);
         when(definitions.findPublishedTools()).thenReturn(List.of(definition));
 
-        return service.execute(TOOL, Map.of(), "", List.of());
+        return service.execute(TOOL, Map.of(), null, "", List.of());
     }
 
     private static McpServerRefusedException unknownTool() {
@@ -82,35 +82,35 @@ class CataloguePushedAgainTest {
 
     @Test
     void anUnknownToolRepublishesTheCatalogueAndAsksAgain() {
-        when(client.requestExecution(anyString(), any(), any(), any(), any()))
+        when(client.requestExecution(anyString(), any(), any(), any(), any(), any()))
                 .thenThrow(unknownTool())
                 .thenReturn(planned());
 
         assertThat(invoke().status()).isEqualTo("planned");
 
         verify(client).publishCatalogue(anyList());
-        verify(client, times(2)).requestExecution(anyString(), any(), any(), any(), any());
+        verify(client, times(2)).requestExecution(anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
     void aToolThatIsStillUnknownAfterwardsIsReported() {
         // A second attempt would turn a clear answer into a loop. If a fresh catalogue does
         // not have it, the tool really is gone and saying so is the useful reply.
-        when(client.requestExecution(anyString(), any(), any(), any(), any())).thenThrow(unknownTool());
+        when(client.requestExecution(anyString(), any(), any(), any(), any(), any())).thenThrow(unknownTool());
 
         assertThatThrownBy(this::invoke)
                 .isInstanceOf(McpServerRefusedException.class)
                 .hasMessageContaining(TOOL);
 
         verify(client, times(1)).publishCatalogue(anyList());
-        verify(client, times(2)).requestExecution(anyString(), any(), any(), any(), any());
+        verify(client, times(2)).requestExecution(anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
     void anOrdinaryRefusalIsNotTreatedAsALostCatalogue() {
         // On the status, not the sentence — but only that status. A refusal the MCP server
         // meant is an answer, and republishing over it would hide it behind a retry.
-        when(client.requestExecution(anyString(), any(), any(), any(), any()))
+        when(client.requestExecution(anyString(), any(), any(), any(), any(), any()))
                 .thenThrow(new McpServerRefusedException(
                         HttpStatus.UNPROCESSABLE_ENTITY, "The plan was rejected"));
 
@@ -121,7 +121,7 @@ class CataloguePushedAgainTest {
 
     @Test
     void aCallThatWorksPublishesNothing() {
-        when(client.requestExecution(anyString(), any(), any(), any(), any())).thenReturn(planned());
+        when(client.requestExecution(anyString(), any(), any(), any(), any(), any())).thenReturn(planned());
 
         assertThat(invoke().status()).isEqualTo("planned");
 
